@@ -11,5 +11,5 @@
             <JSONPath>$.state</JSONPath>
         </Variable>
     </JSONPayload>
-    <Source clearPayload="false">response</Source>>
+    <Source clearPayload="false">response</Source>
 </ExtractVariables>
