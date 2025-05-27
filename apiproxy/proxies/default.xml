@@ -14,7 +14,7 @@
       <Step>
         <Name>AM-TargetResponse</Name>
       </Step>
-    <Response>  
+    </Response>  
   </PreFlow>
   <PostFlow name="PostFlow">
     <Request/>
