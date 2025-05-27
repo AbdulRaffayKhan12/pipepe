@@ -1,0 +1,31 @@
+{
+	"info": {
+		"_postman_id": "3020883b-7218-4e21-88c7-8394ceddc73d",
+		"name": "reverse-api",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "40041998",
+		"_collection_link": "https://drc-api-dev.postman.co/workspace/DRC~9732c411-97b9-41a9-9109-71785d446f85/collection/40041998-3020883b-7218-4e21-88c7-8394ceddc73d?action=share&source=collection_link&creator=40041998"
+	},
+	"item": [
+		{
+			"name": "https://api.abacus-apigeee.com/reverse",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.abacus-apigeee.com/reverse",
+					"protocol": "https",
+					"host": [
+						"api",
+						"abacus-apigeee",
+						"com"
+					],
+					"path": [
+						"reverse"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
