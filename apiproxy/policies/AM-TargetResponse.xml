@@ -4,7 +4,7 @@
     <Set>
         <Payload contentType="application/json">{
             "city": "{city}",
-            "state_new": "{state}"
+            "state_new_1": "{state}"
         }
         </Payload>
     </Set>
