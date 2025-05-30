@@ -9,7 +9,7 @@ $orgs = @(
     },
     @{
         name = "abacus-apigee-demo2"
-        envs = @("test", "test-1")
+        envs = @("demo", "sandbox")
     }
 )
 
