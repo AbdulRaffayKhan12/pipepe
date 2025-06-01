@@ -1,2 +1,2 @@
-﻿org=abacus-apigee-demo2
-env=demo
+﻿org=abacus-apigee-demo
+env=dev
