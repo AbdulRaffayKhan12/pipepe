@@ -1,8 +1,14 @@
+<<<<<<< Updated upstream
 ﻿org=abacus-apigee-demo2
 <<<<<<< Updated upstream
 env=sandbox
 branch=demo-1
 =======
 env=demo
+>>>>>>> Stashed changes
+branch=demo-1
+=======
+﻿org=abacus-apigee-demo
+env=dev2
 >>>>>>> Stashed changes
 branch=demo-1
