@@ -3,7 +3,11 @@
     <DisplayName>Quota1</DisplayName>
     <Properties/>
     <Allow count="70"/>
+<<<<<<< Updated upstream
     <Interval>41</Interval>
+=======
+    <Interval>40</Interval>
+>>>>>>> Stashed changes
     <Distributed>true</Distributed>
     <Synchronous>true</Synchronous>
     <TimeUnit ref="request.header.quota_timeout">minute</TimeUnit>
