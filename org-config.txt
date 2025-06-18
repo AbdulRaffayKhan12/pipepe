@@ -1,3 +1,3 @@
 ﻿org=abacus-apigee-demo2
-env=sandbox
-branch=demo-3
+env=demo
+branch=demo-2
