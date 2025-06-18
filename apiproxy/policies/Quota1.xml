@@ -5,12 +5,16 @@
     <Allow count="70"/>
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     <Interval>41</Interval>
 =======
     <Interval>40</Interval>
 >>>>>>> Stashed changes
 =======
     <Interval>44</Interval>
+>>>>>>> Stashed changes
+=======
+    <Interval>49</Interval>
 >>>>>>> Stashed changes
     <Distributed>true</Distributed>
     <Synchronous>true</Synchronous>
