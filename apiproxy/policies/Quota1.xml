@@ -2,7 +2,7 @@
 <Quota async="false" continueOnError="false" enabled="true" name="Quota1">
     <DisplayName>Quota1</DisplayName>
     <Properties/>
-    <Allow count="70"/>
+    <Allow count="79"/>
     <Interval>82</Interval>
     <Distributed>true</Distributed>
     <Synchronous>true</Synchronous>
