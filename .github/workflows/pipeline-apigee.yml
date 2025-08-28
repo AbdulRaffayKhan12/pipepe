@@ -4,14 +4,14 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - '**'  # Run for all branches
+      - '**'
 
 jobs:
   deploy:
     runs-on: windows-latest
     env:
       API_NAME: reverse-pipeline1
-      PROXY_FOLDER: apiproxy
+      PROXY_NAME: apiproxy
       ORG_CONFIG_PATH: org-config.txt
       ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
 
@@ -20,6 +20,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud
+        id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.SERVICE_ACCOUNT_KEY }}
@@ -34,7 +35,6 @@ jobs:
         shell: pwsh
         run: |
           $configText = Get-Content "${{ env.ORG_CONFIG_PATH }}" | ForEach-Object { $_.Trim() }
-
           $orgLine = $configText | Where-Object { $_ -like 'org=*' }
           $envLine = $configText | Where-Object { $_ -like 'env=*' }
 
@@ -52,16 +52,16 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ORG=$org"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ENVS=$($environments -join ',')"
 
-      - name: Zip Proxy Correctly
+      - name: Zip Proxy
         shell: pwsh
         run: |
           $zipPath = "${{ env.ZIP_PATH }}"
-          $proxyFolder = "${{ env.PROXY_FOLDER }}"
-
           if (Test-Path $zipPath) { Remove-Item $zipPath }
 
-          # Ensure the ZIP has the correct structure (apiproxy/ at root)
-          tar -a -c -f $zipPath -C $proxyFolder .
+          # Zip the 'apiproxy' folder correctly (no ./ paths)
+          Push-Location ${{ github.workspace }}
+          tar -a -c -f $zipPath apiproxy
+          Pop-Location
 
           Write-Host "✅ Proxy zipped at $zipPath"
 
@@ -84,12 +84,8 @@ jobs:
           $token = $Env:APIGEE_TOKEN
           $importResponseFile = "${{ github.workspace }}\import_response.json"
 
-          Write-Host "📦 Importing proxy $($Env:API_NAME) from $zipFile"
-
           Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$($Env:API_NAME)" `
-            -Method POST -InFile $zipFile `
-            -ContentType "application/octet-stream" `
-            -Headers @{ Authorization = "Bearer $token" } `
+            -Method POST -InFile $zipFile -Headers @{ Authorization = "Bearer $token"; "Content-Type"="application/octet-stream" } `
             -OutFile $importResponseFile
 
           $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
