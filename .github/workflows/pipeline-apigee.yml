@@ -65,35 +65,23 @@ jobs:
           echo "APIGEE_TOKEN=$token" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "✅ Access Token Retrieved"
 
-      # Import Apigee Proxy
-      - name: Import Apigee Proxy
-        shell: pwsh
+     # 🔑 Import Proxy into Apigee
+      - name: Import Proxy
         run: |
-          if (Test-Path "${{ env.ZIP_PATH }}") { Remove-Item "${{ env.ZIP_PATH }}" }
-          Compress-Archive -Path * -DestinationPath "${{ env.ZIP_PATH }}" -Force
-
-          Write-Host "📦 Created ZIP: $env:ZIP_PATH"
-          if (-not (Test-Path "${{ env.ZIP_PATH }}")) {
-            Write-Error "❌ Proxy ZIP not created!"
-            exit 1
-          }
-
-          curl.exe --silent --show-error --fail `
-            --location "https://apigee.googleapis.com/v1/organizations/${{ env.APIGEE_ORG }}/apis?action=import&name=${{ env.API_NAME }}" `
+          curl.exe --location "https://apigee.googleapis.com/v1/organizations/${{ env.APIGEE_ORG }}/apis?action=import&name=${{ env.API_NAME }}" `
             --header "Authorization: Bearer $env:APIGEE_TOKEN" `
-            --header "Content-Type: multipart/form-data" `
-            --form "file=@${{ env.ZIP_PATH }}" `
-            --output response.json
+            --header "Content-Type: application/octet-stream" `
+            --data-binary "@${{ env.ZIP_PATH }}" -o import_response.json
 
-          if (-not (Test-Path "response.json")) {
-            Write-Error "❌ response.json not found after import"
-            exit 1
+          $revision = (Get-Content import_response.json | ConvertFrom-Json).revision
+          if (-not $revision) {
+              Write-Error "❌ Failed to import proxy"
+              Get-Content import_response.json
+              exit 1
           }
-
-          $json = Get-Content response.json | ConvertFrom-Json
-          $revision = $json.revision
           echo "REVISION=$revision" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "✅ Imported Proxy Revision: $revision"
+        shell: pwsh
 
       # Deploy Apigee Proxy
       - name: Deploy Apigee Proxy
