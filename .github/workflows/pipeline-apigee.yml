@@ -34,18 +34,32 @@ jobs:
         Set-Content -Path "${{ github.workspace }}/org_name.txt" -Value $org -Encoding UTF8
         Set-Content -Path "${{ github.workspace }}/env_list.txt" -Value ($envs -join ',') -Encoding UTF8
 
-    - name: Authenticate with GCP
-      uses: google-github-actions/auth@v2
-      with:
-        credentials_json: ${{ secrets.SERVICE_ACCOUNT_KEY }}
-
-    - name: Set GCP Token
-      id: gcloud_token
+    - name: Authenticate with GCP using service account
       shell: pwsh
       run: |
-        $token = gcloud auth print-access-token
-        Write-Host "GCP Access Token retrieved"
-        Write-Output "::set-output name=token::$token"
+        $key = $Env:SERVICE_ACCOUNT_KEY
+        $keyPath = "${{ github.workspace }}/service-account.json"
+        Set-Content -Path $keyPath -Value $key -Encoding utf8
+
+        $token = & python - <<PY
+import json, jwt, time, requests
+keyfile = "$keyPath"
+with open(keyfile) as f: creds = json.load(f)
+header = {"alg":"RS256","typ":"JWT"}
+iat = int(time.time())
+payload = {
+  "iss": creds["client_email"],
+  "scope": "https://www.googleapis.com/auth/cloud-platform",
+  "aud": creds["token_uri"],
+  "iat": iat,
+  "exp": iat + 3600
+}
+signed_jwt = jwt.encode(payload, creds["private_key"], algorithm="RS256")
+r = requests.post(creds["token_uri"], data={"grant_type":"urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":signed_jwt})
+print(r.json()["access_token"])
+PY
+        Write-Host "GCP Access Token generated"
+        Set-Variable -Name GCP_TOKEN -Value $token
 
     - name: Create Proxy Zip
       shell: pwsh
@@ -74,7 +88,7 @@ jobs:
         $responseFile = "${{ github.workspace }}/import_response.json"
 
         curl.exe --location --request POST "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=reverse-pipeline1" `
-            --header "Authorization: Bearer $($env:GCP_TOKEN)" `
+            --header "Authorization: Bearer $($Env:GCP_TOKEN)" `
             --header "Content-Type: application/octet-stream" `
             --data-binary "@$zipPath" `
             -o $responseFile
@@ -96,5 +110,5 @@ jobs:
         foreach ($env in $envs) {
             Write-Host "🚀 Deploying reverse-pipeline1 revision $REVISION to environment $env"
             curl.exe --location --request POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$env/apis/reverse-pipeline1/revisions/$REVISION/deployments?override=true" `
-                --header "Authorization: Bearer $($env:GCP_TOKEN)"
+                --header "Authorization: Bearer $($Env:GCP_TOKEN)"
         }
