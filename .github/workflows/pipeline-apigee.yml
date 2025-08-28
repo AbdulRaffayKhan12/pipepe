@@ -4,24 +4,22 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - '**'   # run on all branches
+      - '**'  # Run for all branches
 
 jobs:
   deploy:
     runs-on: windows-latest
     env:
       API_NAME: reverse-pipeline1
-      PROXY_NAME: Reverse-pipe
-      GIT_REPO_URL: https://github.com/AbdulRaffayKhan12/pipepe.git
+      PROXY_FOLDER: apiproxy
       ORG_CONFIG_PATH: org-config.txt
-      ZIP_PATH: ${{ github.workspace }}\Reverse-pipe.zip
+      ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud
-        id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.SERVICE_ACCOUNT_KEY }}
@@ -54,19 +52,18 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ORG=$org"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ENVS=$($environments -join ',')"
 
-      - name: Zip Proxy
+      - name: Zip Proxy Correctly
         shell: pwsh
         run: |
-          if (-Not (Test-Path "${{ github.workspace }}\apiproxy")) {
-              Write-Error "❌ Proxy folder 'apiproxy' not found!"
-              exit 1
-          }
+          $zipPath = "${{ env.ZIP_PATH }}"
+          $proxyFolder = "${{ env.PROXY_FOLDER }}"
 
-          if (Test-Path "${{ env.ZIP_PATH }}") { Remove-Item "${{ env.ZIP_PATH }}" }
+          if (Test-Path $zipPath) { Remove-Item $zipPath }
 
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          [System.IO.Compression.ZipFile]::CreateFromDirectory("${{ github.workspace }}\apiproxy", "${{ env.ZIP_PATH }}")
-          Write-Host "✅ Proxy zipped to ${{ env.ZIP_PATH }}"
+          # Ensure the ZIP has the correct structure (apiproxy/ at root)
+          tar -a -c -f $zipPath -C $proxyFolder .
+
+          Write-Host "✅ Proxy zipped at $zipPath"
 
       - name: Get Access Token
         shell: pwsh
@@ -89,18 +86,11 @@ jobs:
 
           Write-Host "📦 Importing proxy $($Env:API_NAME) from $zipFile"
 
-          Invoke-WebRequest `
-            -Uri "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$($Env:API_NAME)" `
-            -Method POST `
-            -InFile $zipFile `
+          Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$($Env:API_NAME)" `
+            -Method POST -InFile $zipFile `
             -ContentType "application/octet-stream" `
             -Headers @{ Authorization = "Bearer $token" } `
             -OutFile $importResponseFile
-
-          if (-Not (Test-Path $importResponseFile)) {
-              Write-Error "❌ Failed to import proxy, response file not created"
-              exit 1
-          }
 
           $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
           Write-Host "✅ Imported Proxy Revision: $revision"
@@ -116,11 +106,7 @@ jobs:
 
           foreach ($envName in $envList) {
               Write-Host "🚀 Deploying $($Env:API_NAME) revision $revision to environment $envName"
-
-              Invoke-WebRequest `
-                -Uri "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$($Env:API_NAME)/revisions/$revision/deployments?override=true" `
-                -Method POST `
-                -Headers @{ Authorization = "Bearer $token" }
-
+              Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$($Env:API_NAME)/revisions/$revision/deployments?override=true" `
+                -Method POST -Headers @{ Authorization = "Bearer $token" }
               Write-Host "✅ Deployment to $envName completed"
           }
