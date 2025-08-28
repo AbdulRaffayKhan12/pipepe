@@ -2,10 +2,9 @@ name: Deploy Apigee Proxy
 
 on:
   push:
-    branches:
-      - "**"   # run on all branches
-  pull_request:    # optional: also run on PRs
-  workflow_dispatch:  # allow manual trigger
+    branches:          
+      - '**'
+  workflow_dispatch:
 
 env:
   API_NAME: reverse-pipeline1
@@ -17,31 +16,42 @@ env:
 jobs:
   deploy:
     runs-on: windows-latest
+
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      # 🔑 Authenticate with Google Cloud
+      # ✅ Auth first (fix for your gcloud issue)
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.SERVICE_ACCOUNT_KEY }}
 
-      # ⚙️ Setup gcloud CLI
       - name: Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: abacus-apigee-demo2
 
+      # ✅ Fixed split issue
       - name: Load Org and Env Config
         run: |
           $configText = Get-Content "${{ env.ORG_CONFIG_PATH }}" | ForEach-Object { $_.Trim() }
           $orgLine = $configText | Where-Object { $_ -like 'org=*' }
           $envLine = $configText | Where-Object { $_ -like 'env=*' }
           $org = $orgLine -replace '^org=', ''
-          $envs = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
+
+          # Properly split env list on commas (not characters!)
+          $envs = ($envLine -replace '^env=', '').Split(@(','), [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() }
+
+          # 🔥 Option A: just take the first env (safe default)
+          $selectedEnv = $envs[0]
+
+          # 🔥 Option B: map branches to envs if you want
+          # if ($env: GITHUB_REF -like "refs/heads/main") { $selectedEnv = "prod" }
+          # elseif ($env: GITHUB_REF -like "refs/heads/dev") { $selectedEnv = "dev" }
+
           echo "APIGEE_ORG=$org" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "APIGEE_ENV=$($envs[0])" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "APIGEE_ENV=$selectedEnv" | Out-File -FilePath $env:GITHUB_ENV -Append
         shell: pwsh
 
       - name: Zip Proxy
