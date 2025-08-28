@@ -54,6 +54,12 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ORG=$org"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ENVS=$($environments -join ',')"
 
+      - name: Zip Proxy
+        shell: pwsh
+        run: |
+          if (Test-Path "${{ env.ZIP_PATH }}") { Remove-Item "${{ env.ZIP_PATH }}" }
+          tar -a -c -f "${{ env.ZIP_PATH }}" apiproxy
+
       - name: Get Access Token
         shell: pwsh
         run: |
