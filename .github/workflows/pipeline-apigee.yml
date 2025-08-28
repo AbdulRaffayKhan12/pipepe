@@ -3,8 +3,8 @@ name: Deploy Apigee Proxy
 on:
   push:
     branches:
-      - "*"   # trigger on all branches
-  workflow_dispatch:
+      - "*"   # triggers automatically on push to any branch
+  workflow_dispatch:   # also allow manual trigger
 
 env:
   API_NAME: reverse-pipeline1
@@ -15,13 +15,13 @@ env:
 
 jobs:
   deploy:
-    runs-on: windows-latest
-
+    runs-on: windows-latest   # keep windows since you're using PowerShell
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
+      # 🔑 Authenticate with GCP using service account
+      - name: Authenticate with GCP
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.SERVICE_ACCOUNT_KEY }}
@@ -31,48 +31,72 @@ jobs:
         with:
           project_id: abacus-apigee-demo2
 
+      # 🔑 Load org and environment from org-config.txt
       - name: Load Org and Env Config
         run: |
           $configText = Get-Content "${{ env.ORG_CONFIG_PATH }}" | ForEach-Object { $_.Trim() }
 
-          # Extract org
           $orgLine = $configText | Where-Object { $_ -like 'org=*' }
-          $org = $orgLine -replace '^org=', ''
-
-          # Extract env safely
           $envLine = $configText | Where-Object { $_ -like 'env=*' }
-          $envsString = $envLine -replace '^env=', ''
-          $envs = $envsString -split ',' | ForEach-Object { $_.Trim() }
-          $selectedEnv = $envs[0]   # just take first for now
 
+          if (-not $orgLine -or -not $envLine) {
+              Write-Error "❌ Missing org or env entry in org-config.txt"
+              exit 1
+          }
+
+          $org = $orgLine -replace '^org=', ''
+          $environments = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
+
+          Write-Host "✅ Loaded Org: $org"
+          Write-Host "✅ Loaded Environments: $($environments -join ', ')"
+
+          # Export to GitHub env
           echo "APIGEE_ORG=$org" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "APIGEE_ENV=$selectedEnv" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "APIGEE_ENV=$($environments[0])" | Out-File -FilePath $env:GITHUB_ENV -Append
         shell: pwsh
 
+      # 🔑 Zip the proxy folder
       - name: Zip Proxy
         run: |
           if (Test-Path "${{ env.ZIP_PATH }}") { Remove-Item "${{ env.ZIP_PATH }}" }
           tar -a -c -f "${{ env.ZIP_PATH }}" apiproxy
         shell: pwsh
 
+      # 🔑 Get GCP Access Token
       - name: Get Access Token
         run: |
           $token = gcloud auth print-access-token
+          if (-not $token) {
+              Write-Error "❌ Failed to fetch access token"
+              exit 1
+          }
           echo "APIGEE_TOKEN=$token" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "✅ Access Token Retrieved"
         shell: pwsh
 
+      # 🔑 Import Proxy into Apigee
       - name: Import Proxy
         run: |
           curl.exe --location "https://apigee.googleapis.com/v1/organizations/${{ env.APIGEE_ORG }}/apis?action=import&name=${{ env.API_NAME }}" `
             --header "Authorization: Bearer $env:APIGEE_TOKEN" `
             --header "Content-Type: application/octet-stream" `
             --data-binary "@${{ env.ZIP_PATH }}" -o import_response.json
+
           $revision = (Get-Content import_response.json | ConvertFrom-Json).revision
+          if (-not $revision) {
+              Write-Error "❌ Failed to import proxy"
+              Get-Content import_response.json
+              exit 1
+          }
           echo "REVISION=$revision" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "✅ Imported Proxy Revision: $revision"
         shell: pwsh
 
+      # 🔑 Deploy Proxy to Apigee Environment
       - name: Deploy Proxy
         run: |
+          Write-Host "🚀 Deploying ${{ env.API_NAME }} revision $env:REVISION to environment $env:APIGEE_ENV"
+
           curl.exe --location --request POST "https://apigee.googleapis.com/v1/organizations/${{ env.APIGEE_ORG }}/environments/${{ env.APIGEE_ENV }}/apis/${{ env.API_NAME }}/revisions/$env:REVISION/deployments?override=true" `
             --header "Authorization: Bearer $env:APIGEE_TOKEN" `
             --header "Content-Type: application/json" `
