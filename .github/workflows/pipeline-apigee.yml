@@ -1,0 +1,69 @@
+name: Deploy Apigee Proxy
+
+on:
+  push:
+    branches:
+      - "**"   # run on any branch
+  pull_request:    # optional: also run on PRs
+  workflow_dispatch:
+
+env:
+  API_NAME: reverse-pipeline1
+  PROXY_NAME: Reverse-pipe
+  GIT_REPO_URL: https://github.com/AbdulRaffayKhan12/pipepe.git
+  ORG_CONFIG_PATH: org-config.txt
+  ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          service_account_key: ${{ secrets.SERVICE_ACCOUNT_KEY }}
+          project_id: abacus-apigee-demo2
+
+      - name: Load Org and Env Config
+        run: |
+          $configText = Get-Content "${{ env.ORG_CONFIG_PATH }}" | ForEach-Object { $_.Trim() }
+          $orgLine = $configText | Where-Object { $_ -like 'org=*' }
+          $envLine = $configText | Where-Object { $_ -like 'env=*' }
+          $org = $orgLine -replace '^org=', ''
+          $envs = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
+          echo "APIGEE_ORG=$org" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "APIGEE_ENV=$($envs[0])" | Out-File -FilePath $env:GITHUB_ENV -Append
+        shell: pwsh
+
+      - name: Zip Proxy
+        run: |
+          if (Test-Path "${{ env.ZIP_PATH }}") { Remove-Item "${{ env.ZIP_PATH }}" }
+          tar -a -c -f "${{ env.ZIP_PATH }}" apiproxy
+        shell: pwsh
+
+      - name: Get Access Token
+        run: |
+          $token = gcloud auth print-access-token
+          echo "APIGEE_TOKEN=$token" | Out-File -FilePath $env:GITHUB_ENV -Append
+        shell: pwsh
+
+      - name: Import Proxy
+        run: |
+          curl.exe --location "https://apigee.googleapis.com/v1/organizations/${{ env.APIGEE_ORG }}/apis?action=import&name=${{ env.API_NAME }}" `
+            --header "Authorization: Bearer $env:APIGEE_TOKEN" `
+            --header "Content-Type: application/octet-stream" `
+            --data-binary "@${{ env.ZIP_PATH }}" -o import_response.json
+          $revision = (Get-Content import_response.json | ConvertFrom-Json).revision
+          echo "REVISION=$revision" | Out-File -FilePath $env:GITHUB_ENV -Append
+        shell: pwsh
+
+      - name: Deploy Proxy
+        run: |
+          curl.exe --location --request POST "https://apigee.googleapis.com/v1/organizations/${{ env.APIGEE_ORG }}/environments/${{ env.APIGEE_ENV }}/apis/${{ env.API_NAME }}/revisions/$env:REVISION/deployments?override=true" `
+            --header "Authorization: Bearer $env:APIGEE_TOKEN" `
+            --header "Content-Type: application/json" `
+            --data "{}"
+        shell: pwsh
