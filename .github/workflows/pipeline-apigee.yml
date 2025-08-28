@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
+      - '**'   # run on all branches
 
 jobs:
   deploy:
@@ -14,7 +14,7 @@ jobs:
       PROXY_NAME: Reverse-pipe
       GIT_REPO_URL: https://github.com/AbdulRaffayKhan12/pipepe.git
       ORG_CONFIG_PATH: org-config.txt
-      ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
+      ZIP_PATH: ${{ github.workspace }}\Reverse-pipe.zip
 
     steps:
       - name: Checkout Repository
@@ -57,8 +57,16 @@ jobs:
       - name: Zip Proxy
         shell: pwsh
         run: |
+          if (-Not (Test-Path "${{ github.workspace }}\apiproxy")) {
+              Write-Error "❌ Proxy folder 'apiproxy' not found!"
+              exit 1
+          }
+
           if (Test-Path "${{ env.ZIP_PATH }}") { Remove-Item "${{ env.ZIP_PATH }}" }
-          tar -a -c -f "${{ env.ZIP_PATH }}" apiproxy
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory("${{ github.workspace }}\apiproxy", "${{ env.ZIP_PATH }}")
+          Write-Host "✅ Proxy zipped to ${{ env.ZIP_PATH }}"
 
       - name: Get Access Token
         shell: pwsh
@@ -78,8 +86,22 @@ jobs:
           $zipFile = $Env:ZIP_PATH
           $token = $Env:APIGEE_TOKEN
           $importResponseFile = "${{ github.workspace }}\import_response.json"
-          Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$($Env:API_NAME)" `
-            -Method POST -InFile $zipFile -Headers @{ Authorization = "Bearer $token" } -OutFile $importResponseFile
+
+          Write-Host "📦 Importing proxy $($Env:API_NAME) from $zipFile"
+
+          Invoke-WebRequest `
+            -Uri "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$($Env:API_NAME)" `
+            -Method POST `
+            -InFile $zipFile `
+            -ContentType "application/octet-stream" `
+            -Headers @{ Authorization = "Bearer $token" } `
+            -OutFile $importResponseFile
+
+          if (-Not (Test-Path $importResponseFile)) {
+              Write-Error "❌ Failed to import proxy, response file not created"
+              exit 1
+          }
+
           $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
           Write-Host "✅ Imported Proxy Revision: $revision"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_REVISION=$revision"
@@ -91,9 +113,14 @@ jobs:
           $revision = $Env:APIGEE_REVISION
           $token = $Env:APIGEE_TOKEN
           $envList = $Env:APIGEE_ENVS.Split(',')
+
           foreach ($envName in $envList) {
               Write-Host "🚀 Deploying $($Env:API_NAME) revision $revision to environment $envName"
-              Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$($Env:API_NAME)/revisions/$revision/deployments?override=true" `
-                -Method POST -Headers @{ Authorization = "Bearer $token" }
+
+              Invoke-WebRequest `
+                -Uri "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$($Env:API_NAME)/revisions/$revision/deployments?override=true" `
+                -Method POST `
+                -Headers @{ Authorization = "Bearer $token" }
+
               Write-Host "✅ Deployment to $envName completed"
           }
