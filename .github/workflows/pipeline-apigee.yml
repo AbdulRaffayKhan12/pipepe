@@ -2,8 +2,8 @@ name: Deploy Apigee Proxy
 
 on:
   push:
-    branches:          
-      - '**'
+    branches:
+      - "*"   # trigger on all branches
   workflow_dispatch:
 
 env:
@@ -21,7 +21,6 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      # ✅ Auth first (fix for your gcloud issue)
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -32,23 +31,19 @@ jobs:
         with:
           project_id: abacus-apigee-demo2
 
-      # ✅ Fixed split issue
       - name: Load Org and Env Config
         run: |
           $configText = Get-Content "${{ env.ORG_CONFIG_PATH }}" | ForEach-Object { $_.Trim() }
+
+          # Extract org
           $orgLine = $configText | Where-Object { $_ -like 'org=*' }
-          $envLine = $configText | Where-Object { $_ -like 'env=*' }
           $org = $orgLine -replace '^org=', ''
 
-          # Properly split env list on commas (not characters!)
-          $envs = ($envLine -replace '^env=', '').Split(@(','), [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() }
-
-          # 🔥 Option A: just take the first env (safe default)
-          $selectedEnv = $envs[0]
-
-          # 🔥 Option B: map branches to envs if you want
-          # if ($env: GITHUB_REF -like "refs/heads/main") { $selectedEnv = "prod" }
-          # elseif ($env: GITHUB_REF -like "refs/heads/dev") { $selectedEnv = "dev" }
+          # Extract env safely
+          $envLine = $configText | Where-Object { $_ -like 'env=*' }
+          $envsString = $envLine -replace '^env=', ''
+          $envs = $envsString -split ',' | ForEach-Object { $_.Trim() }
+          $selectedEnv = $envs[0]   # just take first for now
 
           echo "APIGEE_ORG=$org" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "APIGEE_ENV=$selectedEnv" | Out-File -FilePath $env:GITHUB_ENV -Append
