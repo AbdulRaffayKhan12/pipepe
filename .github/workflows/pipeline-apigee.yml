@@ -1,98 +1,93 @@
-name: Apigee Deployment
+name: Deploy to Apigee
 
 on:
+  workflow_dispatch:
   push:
     branches:
-      - '**'
+      - main
 
 jobs:
   deploy:
     runs-on: windows-latest
-
     env:
+      API_NAME: reverse-pipeline1
+      PROXY_NAME: Reverse-pipe
+      GIT_REPO_URL: https://github.com/AbdulRaffayKhan12/pipepe.git
       ORG_CONFIG_PATH: org-config.txt
-      SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
+      ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Load Org and Env Config
-      shell: pwsh
-      run: |
-        $configText = Get-Content $Env:ORG_CONFIG_PATH | ForEach-Object { $_.Trim() }
-        $orgLine = $configText | Where-Object { $_ -like 'org=*' }
-        $envLine = $configText | Where-Object { $_ -like 'env=*' }
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-        if (-not $orgLine -or -not $envLine) {
-          Write-Error "Missing org or env entry in org-config.txt"
-          exit 1
-        }
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          version: latest
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-        $org = $orgLine -replace '^org=', ''
-        $envs = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
+      - name: Load Org and Env Config
+        shell: pwsh
+        run: |
+          $configText = Get-Content "${{ env.ORG_CONFIG_PATH }}" | ForEach-Object { $_.Trim() }
 
-        Write-Host "✅ Loaded Org: $org"
-        Write-Host "✅ Loaded Environments: $envs"
+          $orgLine = $configText | Where-Object { $_ -like 'org=*' }
+          $envLine = $configText | Where-Object { $_ -like 'env=*' }
 
-        Set-Variable -Name ORG -Value $org
-        Set-Variable -Name ENV_LIST -Value ($envs -join ',')
+          if (-not $orgLine -or -not $envLine) {
+              Write-Error "❌ Missing org or env entry in org-config.txt"
+              exit 1
+          }
 
-    - name: Create ZIP of Apigee Proxy
-      shell: pwsh
-      run: |
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $sourceDir = "${{ github.workspace }}\Reverse-pipe"
-        $zipFile = "${{ github.workspace }}\Reverse-pipe.zip"
+          $org = $orgLine -replace '^org=', ''
+          $environments = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
 
-        if (-Not (Test-Path $sourceDir)) {
-          Write-Error "Proxy source directory not found: $sourceDir"
-          exit 1
-        }
+          Write-Host "✅ Loaded Org: $org"
+          Write-Host "✅ Loaded Environments: $($environments -join ', ')"
 
-        if (Test-Path $zipFile) { Remove-Item $zipFile }
-        [System.IO.Compression.ZipFile]::CreateFromDirectory($sourceDir, $zipFile)
-        Write-Host "✅ Created ZIP: $zipFile"
-        Set-Variable -Name ZIP_FILE -Value $zipFile
+          Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ORG=$org"
+          Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ENVS=$($environments -join ',')"
 
-    - name: Authenticate with GCP Service Account
-      shell: pwsh
-      run: |
-        $keyPath = "${{ github.workspace }}\service-account.json"
-        Set-Content -Path $keyPath -Value $Env:SERVICE_ACCOUNT_KEY -Encoding utf8
+      - name: Get Access Token
+        shell: pwsh
+        run: |
+          $token = gcloud auth print-access-token
+          if (-not $token) {
+              Write-Error "❌ Failed to get access token"
+              exit 1
+          }
+          Write-Host "✅ Access Token Retrieved"
+          Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_TOKEN=$token"
 
-        # Authenticate with gcloud
-        gcloud auth activate-service-account --key-file=$keyPath
-        $token = gcloud auth print-access-token
-        Write-Host "✅ GCP Access Token generated"
-        Set-Variable -Name GCP_TOKEN -Value $token
+      - name: Import Apigee Proxy
+        shell: pwsh
+        run: |
+          $org = $Env:APIGEE_ORG
+          $zipFile = $Env:ZIP_PATH
+          $token = $Env:APIGEE_TOKEN
+          $importResponseFile = "${{ github.workspace }}\import_response.json"
+          Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$($Env:API_NAME)" `
+            -Method POST -InFile $zipFile -Headers @{ Authorization = "Bearer $token" } -OutFile $importResponseFile
+          $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
+          Write-Host "✅ Imported Proxy Revision: $revision"
+          Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_REVISION=$revision"
 
-    - name: Import Apigee Proxy
-      shell: pwsh
-      run: |
-        $org = $Env:ORG
-        $zipFile = $Env:ZIP_FILE
-        $token = $Env:GCP_TOKEN
-
-        $importResponseFile = "${{ github.workspace }}\import_response.json"
-        Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=reverse-pipeline1" `
-          -Method POST -InFile $zipFile -Headers @{ Authorization = "Bearer $token" } -OutFile $importResponseFile
-
-        $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
-        Write-Host "✅ Imported Proxy Revision: $revision"
-        Set-Variable -Name REVISION -Value $revision
-
-    - name: Deploy Apigee Proxy
-      shell: pwsh
-      run: |
-        $org = $Env:ORG
-        $revision = $Env:REVISION
-        $token = $Env:GCP_TOKEN
-        $envList = $Env:ENV_LIST.Split(',')
-
-        foreach ($envName in $envList) {
-          Write-Host "🚀 Deploying reverse-pipeline1 revision $revision to environment $envName"
-          Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/reverse-pipeline1/revisions/$revision/deployments?override=true" `
-            -Method POST -Headers @{ Authorization = "Bearer $token" }
-          Write-Host "✅ Deployment to $envName completed"
-        }
+      - name: Deploy Apigee Proxy
+        shell: pwsh
+        run: |
+          $org = $Env:APIGEE_ORG
+          $revision = $Env:APIGEE_REVISION
+          $token = $Env:APIGEE_TOKEN
+          $envList = $Env:APIGEE_ENVS.Split(',')
+          foreach ($envName in $envList) {
+              Write-Host "🚀 Deploying $($Env:API_NAME) revision $revision to environment $envName"
+              Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$($Env:API_NAME)/revisions/$revision/deployments?override=true" `
+                -Method POST -Headers @{ Authorization = "Bearer $token" }
+              Write-Host "✅ Deployment to $envName completed"
+          }
