@@ -1,4 +1,4 @@
-name: Apigee Deployment Pipeline
+name: Apigee Deployment
 
 on:
   push:
@@ -9,106 +9,90 @@ jobs:
   deploy:
     runs-on: windows-latest
 
+    env:
+      ORG_CONFIG_PATH: org-config.txt
+      SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
+
     steps:
-    - name: Checkout Repo
+    - name: Checkout repository
       uses: actions/checkout@v3
 
     - name: Load Org and Env Config
       shell: pwsh
       run: |
-        $configText = Get-Content "${{ github.workspace }}/org-config.txt" | ForEach-Object { $_.Trim() }
+        $configText = Get-Content $Env:ORG_CONFIG_PATH | ForEach-Object { $_.Trim() }
         $orgLine = $configText | Where-Object { $_ -like 'org=*' }
         $envLine = $configText | Where-Object { $_ -like 'env=*' }
 
         if (-not $orgLine -or -not $envLine) {
-            Write-Error "Missing org or env entry in org-config.txt"
-            exit 1
+          Write-Error "Missing org or env entry in org-config.txt"
+          exit 1
         }
 
         $org = $orgLine -replace '^org=', ''
-        $envs = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_ -replace '\s','' }
+        $envs = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
 
         Write-Host "✅ Loaded Org: $org"
         Write-Host "✅ Loaded Environments: $envs"
 
-        Set-Content -Path "${{ github.workspace }}/org_name.txt" -Value $org -Encoding UTF8
-        Set-Content -Path "${{ github.workspace }}/env_list.txt" -Value ($envs -join ',') -Encoding UTF8
+        Set-Variable -Name ORG -Value $org
+        Set-Variable -Name ENV_LIST -Value ($envs -join ',')
 
-    - name: Authenticate with GCP using service account
-      shell: pwsh
-      run: |
-        $key = $Env:SERVICE_ACCOUNT_KEY
-        $keyPath = "${{ github.workspace }}/service-account.json"
-        Set-Content -Path $keyPath -Value $key -Encoding utf8
-
-        $token = & python - <<PY
-import json, jwt, time, requests
-keyfile = "$keyPath"
-with open(keyfile) as f: creds = json.load(f)
-header = {"alg":"RS256","typ":"JWT"}
-iat = int(time.time())
-payload = {
-  "iss": creds["client_email"],
-  "scope": "https://www.googleapis.com/auth/cloud-platform",
-  "aud": creds["token_uri"],
-  "iat": iat,
-  "exp": iat + 3600
-}
-signed_jwt = jwt.encode(payload, creds["private_key"], algorithm="RS256")
-r = requests.post(creds["token_uri"], data={"grant_type":"urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":signed_jwt})
-print(r.json()["access_token"])
-PY
-        Write-Host "GCP Access Token generated"
-        Set-Variable -Name GCP_TOKEN -Value $token
-
-    - name: Create Proxy Zip
+    - name: Create ZIP of Apigee Proxy
       shell: pwsh
       run: |
         Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $zipPath = "${{ github.workspace }}/Reverse-pipe.zip"
-        $sourceDir = "${{ github.workspace }}/Reverse-pipe"
+        $sourceDir = "${{ github.workspace }}\Reverse-pipe"
+        $zipFile = "${{ github.workspace }}\Reverse-pipe.zip"
 
         if (-Not (Test-Path $sourceDir)) {
-            Write-Error "Source folder '$sourceDir' does not exist."
-            exit 1
+          Write-Error "Proxy source directory not found: $sourceDir"
+          exit 1
         }
 
-        if (Test-Path $zipPath) {
-            Remove-Item -Path $zipPath -Force
-        }
+        if (Test-Path $zipFile) { Remove-Item $zipFile }
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($sourceDir, $zipFile)
+        Write-Host "✅ Created ZIP: $zipFile"
+        Set-Variable -Name ZIP_FILE -Value $zipFile
 
-        [System.IO.Compression.ZipFile]::CreateFromDirectory($sourceDir, $zipPath)
-        Write-Host "✅ Created zip file at $zipPath"
-
-    - name: Import Proxy
+    - name: Authenticate with GCP Service Account
       shell: pwsh
       run: |
-        $org = Get-Content "${{ github.workspace }}/org_name.txt"
-        $zipPath = "${{ github.workspace }}/Reverse-pipe.zip"
-        $responseFile = "${{ github.workspace }}/import_response.json"
+        $keyPath = "${{ github.workspace }}\service-account.json"
+        Set-Content -Path $keyPath -Value $Env:SERVICE_ACCOUNT_KEY -Encoding utf8
 
-        curl.exe --location --request POST "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=reverse-pipeline1" `
-            --header "Authorization: Bearer $($Env:GCP_TOKEN)" `
-            --header "Content-Type: application/octet-stream" `
-            --data-binary "@$zipPath" `
-            -o $responseFile
+        # Authenticate with gcloud
+        gcloud auth activate-service-account --key-file=$keyPath
+        $token = gcloud auth print-access-token
+        Write-Host "✅ GCP Access Token generated"
+        Set-Variable -Name GCP_TOKEN -Value $token
 
-        if (-not (Test-Path $responseFile)) {
-            Write-Error "Failed to create import_response.json"
-            exit 1
-        }
+    - name: Import Apigee Proxy
+      shell: pwsh
+      run: |
+        $org = $Env:ORG
+        $zipFile = $Env:ZIP_FILE
+        $token = $Env:GCP_TOKEN
 
-        $revision = (Get-Content $responseFile | ConvertFrom-Json).revision
+        $importResponseFile = "${{ github.workspace }}\import_response.json"
+        Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=reverse-pipeline1" `
+          -Method POST -InFile $zipFile -Headers @{ Authorization = "Bearer $token" } -OutFile $importResponseFile
+
+        $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
         Write-Host "✅ Imported Proxy Revision: $revision"
         Set-Variable -Name REVISION -Value $revision
 
-    - name: Deploy Proxy
+    - name: Deploy Apigee Proxy
       shell: pwsh
       run: |
-        $org = Get-Content "${{ github.workspace }}/org_name.txt"
-        $envs = Get-Content "${{ github.workspace }}/env_list.txt" | Split-String ','
-        foreach ($env in $envs) {
-            Write-Host "🚀 Deploying reverse-pipeline1 revision $REVISION to environment $env"
-            curl.exe --location --request POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$env/apis/reverse-pipeline1/revisions/$REVISION/deployments?override=true" `
-                --header "Authorization: Bearer $($Env:GCP_TOKEN)"
+        $org = $Env:ORG
+        $revision = $Env:REVISION
+        $token = $Env:GCP_TOKEN
+        $envList = $Env:ENV_LIST.Split(',')
+
+        foreach ($envName in $envList) {
+          Write-Host "🚀 Deploying reverse-pipeline1 revision $revision to environment $envName"
+          Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/reverse-pipeline1/revisions/$revision/deployments?override=true" `
+            -Method POST -Headers @{ Authorization = "Bearer $token" }
+          Write-Host "✅ Deployment to $envName completed"
         }
