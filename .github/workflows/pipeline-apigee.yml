@@ -3,9 +3,9 @@ name: Deploy Apigee Proxy
 on:
   push:
     branches:
-      - "**"   # run on any branch
+      - "**"   # run on all branches
   pull_request:    # optional: also run on PRs
-  workflow_dispatch:
+  workflow_dispatch:  # allow manual trigger
 
 env:
   API_NAME: reverse-pipeline1
@@ -21,10 +21,16 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
+      # 🔑 Authenticate with Google Cloud
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.SERVICE_ACCOUNT_KEY }}
+
+      # ⚙️ Setup gcloud CLI
       - name: Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
-          service_account_key: ${{ secrets.SERVICE_ACCOUNT_KEY }}
           project_id: abacus-apigee-demo2
 
       - name: Load Org and Env Config
