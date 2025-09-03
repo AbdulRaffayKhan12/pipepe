@@ -19,11 +19,11 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Cache gcloud installation (Windows path)
+      # ✅ Correct cache path for gcloud SDK on Windows runners
       - name: Cache gcloud SDK
         uses: actions/cache@v4
         with:
-          path: C:\Users\runneradmin\AppData\Local\Google\Cloud SDK
+          path: C:\Program Files (x86)\Google\Cloud SDK
           key: gcloud-${{ runner.os }}-v1
           restore-keys: |
             gcloud-${{ runner.os }}-
