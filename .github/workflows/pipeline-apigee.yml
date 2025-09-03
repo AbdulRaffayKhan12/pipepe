@@ -19,15 +19,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # ✅ Correct cache path for gcloud SDK on Windows runners
-      - name: Cache gcloud SDK
-        uses: actions/cache@v4
-        with:
-          path: C:\Program Files (x86)\Google\Cloud SDK
-          key: gcloud-${{ runner.os }}-v1
-          restore-keys: |
-            gcloud-${{ runner.os }}-
-
       - name: Authenticate to Google Cloud
         id: auth
         uses: google-github-actions/auth@v2
@@ -56,7 +47,6 @@ jobs:
           Write-Host "✅ Loaded Environments: $($environments -join ', ')"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ORG=$org"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ENVS=$($environments -join ',')"
-
       - name: Zip Proxy
         shell: pwsh
         run: |
@@ -67,7 +57,6 @@ jobs:
           tar -a -c -f $zipPath apiproxy
           Pop-Location
           Write-Host "✅ Proxy zipped at $zipPath"
-
       - name: Get Access Token
         shell: pwsh
         run: |
@@ -78,7 +67,6 @@ jobs:
           }
           Write-Host "✅ Access Token Retrieved"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_TOKEN=$token"
-
       - name: Import Apigee Proxy
         shell: pwsh
         run: |
@@ -92,7 +80,6 @@ jobs:
           $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
           Write-Host "✅ Imported Proxy Revision: $revision"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_REVISION=$revision"
-
       - name: Deploy Apigee Proxy
         shell: pwsh
         run: |
