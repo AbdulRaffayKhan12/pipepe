@@ -19,6 +19,15 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # Cache gcloud installation (Windows path)
+      - name: Cache gcloud SDK
+        uses: actions/cache@v4
+        with:
+          path: C:\Users\runneradmin\AppData\Local\Google\Cloud SDK
+          key: gcloud-${{ runner.os }}-v1
+          restore-keys: |
+            gcloud-${{ runner.os }}-
+
       - name: Authenticate to Google Cloud
         id: auth
         uses: google-github-actions/auth@v2
@@ -37,18 +46,14 @@ jobs:
           $configText = Get-Content "${{ env.ORG_CONFIG_PATH }}" | ForEach-Object { $_.Trim() }
           $orgLine = $configText | Where-Object { $_ -like 'org=*' }
           $envLine = $configText | Where-Object { $_ -like 'env=*' }
-
           if (-not $orgLine -or -not $envLine) {
               Write-Error "❌ Missing org or env entry in org-config.txt"
               exit 1
           }
-
           $org = $orgLine -replace '^org=', ''
           $environments = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
-
           Write-Host "✅ Loaded Org: $org"
           Write-Host "✅ Loaded Environments: $($environments -join ', ')"
-
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ORG=$org"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ENVS=$($environments -join ',')"
 
@@ -57,12 +62,10 @@ jobs:
         run: |
           $zipPath = "${{ env.ZIP_PATH }}"
           if (Test-Path $zipPath) { Remove-Item $zipPath }
-
           # Zip the 'apiproxy' folder correctly (no ./ paths)
           Push-Location ${{ github.workspace }}
           tar -a -c -f $zipPath apiproxy
           Pop-Location
-
           Write-Host "✅ Proxy zipped at $zipPath"
 
       - name: Get Access Token
@@ -83,11 +86,9 @@ jobs:
           $zipFile = $Env:ZIP_PATH
           $token = $Env:APIGEE_TOKEN
           $importResponseFile = "${{ github.workspace }}\import_response.json"
-
           Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$($Env:API_NAME)" `
             -Method POST -InFile $zipFile -Headers @{ Authorization = "Bearer $token"; "Content-Type"="application/octet-stream" } `
             -OutFile $importResponseFile
-
           $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
           Write-Host "✅ Imported Proxy Revision: $revision"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_REVISION=$revision"
@@ -99,7 +100,6 @@ jobs:
           $revision = $Env:APIGEE_REVISION
           $token = $Env:APIGEE_TOKEN
           $envList = $Env:APIGEE_ENVS.Split(',')
-
           foreach ($envName in $envList) {
               Write-Host "🚀 Deploying $($Env:API_NAME) revision $revision to environment $envName"
               Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$($Env:API_NAME)/revisions/$revision/deployments?override=true" `
