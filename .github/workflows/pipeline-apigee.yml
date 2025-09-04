@@ -32,13 +32,15 @@ jobs:
           $orgLine = $configText | Where-Object { $_ -like 'org=*' }
           $envLine = $configText | Where-Object { $_ -like 'env=*' }
           if (-not $orgLine -or -not $envLine) {
-              Write-Error "❌ Missing org or env entry in org-config.txt"
+              Write-Error "Missing org or env entry in org-config.txt"
               exit 1
           }
           $org = $orgLine -replace '^org=', ''
           $environments = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
-          Write-Host "✅ Loaded Org: $org"
-          Write-Host "✅ Loaded Environments: $($environments -join ', ')"
+
+          Write-Host "Loaded Org: $org"
+          Write-Host "Loaded Environments: $($environments -join ', ')"
+
           switch ($org) {
             "abacus-apigee-demo" {
               $provider = "projects/180599253937/locations/global/workloadIdentityPools/demo-pool/providers/demo-github"
@@ -49,10 +51,11 @@ jobs:
               $sa = "raffay-cicd@abacus-apigee-demo2.iam.gserviceaccount.com"
             }
             default {
-              Write-Error "❌ Unsupported org: $org"
+              Write-Error "Unsupported org: $org"
               exit 1
             }
           }
+
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ORG=$org"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ENVS=$($environments -join ',')"
           Add-Content -Path $env:GITHUB_ENV -Value "WIF_PROVIDER=$provider"
@@ -75,7 +78,7 @@ jobs:
           Push-Location ${{ github.workspace }}
           tar -a -c -f $zipPath apiproxy
           Pop-Location
-          Write-Host "✅ Proxy zipped at $zipPath"
+          Write-Host "Proxy zipped at $zipPath"
 
       - name: Import Apigee Proxy
         shell: pwsh
@@ -88,7 +91,7 @@ jobs:
             -Method POST -InFile $zipFile -Headers @{ Authorization = "Bearer $token"; "Content-Type"="application/octet-stream" } `
             -OutFile $importResponseFile
           $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
-          Write-Host "✅ Imported Proxy Revision: $revision"
+          Write-Host "Imported Proxy Revision: $revision"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_REVISION=$revision"
 
       - name: Deploy Apigee Proxy
@@ -99,18 +102,23 @@ jobs:
           $token = "${{ steps.auth.outputs.access_token }}"
           $envList = $Env:APIGEE_ENVS.Split(',')
           foreach ($envName in $envList) {
-              Write-Host "🚀 Deploying $($Env:API_NAME) revision $revision to environment $envName"
+              Write-Host "Deploying $($Env:API_NAME) revision $revision to environment $envName"
               Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$($Env:API_NAME)/revisions/$revision/deployments?override=true" `
                 -Method POST -Headers @{ Authorization = "Bearer $token" }
-              Write-Host "✅ Deployment to $envName completed"
+              Write-Host "Deployment to $envName completed"
           }
 
       - name: Notify Teams on Success
         if: ${{ success() }}
         shell: pwsh
         run: |
+          $envList = $Env:APIGEE_ENVS.Split(',')
+          $table = "| API Proxy Name | Environment | Revision Number |`n|---|---|---|`n"
+          foreach ($envName in $envList) {
+              $table += "| $($Env:API_NAME) | $envName | $($Env:APIGEE_REVISION) |`n"
+          }
           $payload = @{
-              text = "✅ Apigee Proxy $($Env:API_NAME) deployed successfully to $($Env:APIGEE_ENVS)"
+              text = "Apigee Proxy deployed successfully:`n$table"
           } | ConvertTo-Json
           Invoke-RestMethod -Uri $Env:TEAMS_WEBHOOK_URL -Method Post -Body $payload -ContentType 'application/json'
 
@@ -119,6 +127,6 @@ jobs:
         shell: pwsh
         run: |
           $payload = @{
-              text = "❌ Apigee Proxy $($Env:API_NAME) deployment failed. Please check the logs."
+              text = "Apigee Proxy $($Env:API_NAME) deployment failed. Please check the logs."
           } | ConvertTo-Json
           Invoke-RestMethod -Uri $Env:TEAMS_WEBHOOK_URL -Method Post -Body $payload -ContentType 'application/json'
