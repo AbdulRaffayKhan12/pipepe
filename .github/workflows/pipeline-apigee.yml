@@ -18,6 +18,7 @@ jobs:
       PROXY_NAME: apiproxy
       ORG_CONFIG_PATH: org-config.txt
       ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
+      TEAMS_WEBHOOK_URL: https://abacusglobal.webhook.office.com/webhookb2/6e279d38-a82e-425d-bc2a-c1f8a54d60c2@51f97e66-3fe9-450d-88ac-7a2380c3f3c6/IncomingWebhook/2a86cd093d72455cafb0503fc1adf50d/4932dba3-6bfd-4d5f-9fcf-fe74385690e2/V2pRIdhyjxtMj7YaQ2JRYfggpvLkxjSuwU_gaoZ4ILnjc1
 
     steps:
       - name: Checkout Repository
@@ -36,10 +37,8 @@ jobs:
           }
           $org = $orgLine -replace '^org=', ''
           $environments = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
-
           Write-Host "✅ Loaded Org: $org"
           Write-Host "✅ Loaded Environments: $($environments -join ', ')"
-
           switch ($org) {
             "abacus-apigee-demo" {
               $provider = "projects/180599253937/locations/global/workloadIdentityPools/demo-pool/providers/demo-github"
@@ -54,7 +53,6 @@ jobs:
               exit 1
             }
           }
-
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ORG=$org"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ENVS=$($environments -join ',')"
           Add-Content -Path $env:GITHUB_ENV -Value "WIF_PROVIDER=$provider"
@@ -106,3 +104,21 @@ jobs:
                 -Method POST -Headers @{ Authorization = "Bearer $token" }
               Write-Host "✅ Deployment to $envName completed"
           }
+
+      - name: Notify Teams on Success
+        if: ${{ success() }}
+        shell: pwsh
+        run: |
+          $payload = @{
+              text = "✅ Apigee Proxy $($Env:API_NAME) deployed successfully to $($Env:APIGEE_ENVS)"
+          } | ConvertTo-Json
+          Invoke-RestMethod -Uri $Env:TEAMS_WEBHOOK_URL -Method Post -Body $payload -ContentType 'application/json'
+
+      - name: Notify Teams on Failure
+        if: ${{ failure() }}
+        shell: pwsh
+        run: |
+          $payload = @{
+              text = "❌ Apigee Proxy $($Env:API_NAME) deployment failed. Please check the logs."
+          } | ConvertTo-Json
+          Invoke-RestMethod -Uri $Env:TEAMS_WEBHOOK_URL -Method Post -Body $payload -ContentType 'application/json'
