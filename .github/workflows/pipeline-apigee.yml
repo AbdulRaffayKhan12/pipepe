@@ -7,8 +7,8 @@ on:
       - '**'
 
 permissions:
-  id-token: write   # Required for Workload Identity Federation (OIDC)
-  contents: read    # Required for actions/checkout
+  id-token: write
+  contents: read
 
 jobs:
   deploy:
@@ -23,16 +23,8 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud (WIF)
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: "projects/738158130399/locations/global/workloadIdentityPools/demo2-pool/providers/demo2-github"
-          service_account: "raffay-cicd@abacus-apigee-demo2.iam.gserviceaccount.com"
-          token_format: "access_token"
-          export_environment_variables: false
-
       - name: Load Org and Env Config
+        id: org-config
         shell: pwsh
         run: |
           $configText = Get-Content "${{ env.ORG_CONFIG_PATH }}" | ForEach-Object { $_.Trim() }
@@ -44,10 +36,38 @@ jobs:
           }
           $org = $orgLine -replace '^org=', ''
           $environments = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
+
           Write-Host "✅ Loaded Org: $org"
           Write-Host "✅ Loaded Environments: $($environments -join ', ')"
+
+          switch ($org) {
+            "abacus-apigee-demo" {
+              $provider = "projects/180599253937/locations/global/workloadIdentityPools/demo-pool/providers/demo-github"
+              $sa = "raffay-check@abacus-apigee-demo.iam.gserviceaccount.com"
+            }
+            "abacus-apigee-demo2" {
+              $provider = "projects/738158130399/locations/global/workloadIdentityPools/demo2-pool/providers/demo2-github"
+              $sa = "raffay-cicd@abacus-apigee-demo2.iam.gserviceaccount.com"
+            }
+            default {
+              Write-Error "❌ Unsupported org: $org"
+              exit 1
+            }
+          }
+
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ORG=$org"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ENVS=$($environments -join ',')"
+          Add-Content -Path $env:GITHUB_ENV -Value "WIF_PROVIDER=$provider"
+          Add-Content -Path $env:GITHUB_ENV -Value "SERVICE_ACCOUNT=$sa"
+
+      - name: Authenticate to Google Cloud (WIF)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+          token_format: "access_token"
+          export_environment_variables: false
 
       - name: Zip Proxy
         shell: pwsh
