@@ -27,7 +27,7 @@ jobs:
         id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: "projects/738158130399/locations/global/workloadIdentityPools/demo2-pool/providers/github-provider"
+          workload_identity_provider: "projects/738158130399/locations/global/workloadIdentityPools/demo2-pool/providers/demo2-github"
           service_account: "raffay-cicd@abacus-apigee-demo2.iam.gserviceaccount.com"
 
       - name: Load Org and Env Config
