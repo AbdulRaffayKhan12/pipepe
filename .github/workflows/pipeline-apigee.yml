@@ -10,6 +10,9 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  TEAMS_WEBHOOK_URL: https://abacusglobal.webhook.office.com/webhookb2/6e279d38-a82e-425d-bc2a-c1f8a54d60c2@51f97e66-3fe9-450d-88ac-7a2380c3f3c6/IncomingWebhook/2a86cd093d72455cafb0503fc1adf50d/4932dba3-6bfd-4d5f-9fcf-fe74385690e2/V2pRIdhyjxtMj7YaQ2JRYfggpvLkxjSuwU_gaoZ4ILnjc1
+
 jobs:
   deploy:
     runs-on: windows-latest
@@ -18,7 +21,6 @@ jobs:
       PROXY_NAME: apiproxy
       ORG_CONFIG_PATH: org-config.txt
       ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
-      TEAMS_WEBHOOK_URL: https://abacusglobal.webhook.office.com/webhookb2/6e279d38-a82e-425d-bc2a-c1f8a54d60c2@51f97e66-3fe9-450d-88ac-7a2380c3f3c6/IncomingWebhook/2a86cd093d72455cafb0503fc1adf50d/4932dba3-6bfd-4d5f-9fcf-fe74385690e2/V2pRIdhyjxtMj7YaQ2JRYfggpvLkxjSuwU_gaoZ4ILnjc1
 
     steps:
       - name: Checkout Repository
@@ -101,25 +103,30 @@ jobs:
           $revision = $Env:APIGEE_REVISION
           $token = "${{ steps.auth.outputs.access_token }}"
           $envList = $Env:APIGEE_ENVS.Split(',')
+          $deployResults = @()
           foreach ($envName in $envList) {
               Write-Host "Deploying $($Env:API_NAME) revision $revision to environment $envName"
               Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$($Env:API_NAME)/revisions/$revision/deployments?override=true" `
                 -Method POST -Headers @{ Authorization = "Bearer $token" }
-              Write-Host "Deployment to $envName completed"
+              $deployResults += @{
+                  Environment = $envName
+                  Revision = $revision
+                  Proxy = $Env:API_NAME
+              }
           }
+          $deployResults | ConvertTo-Json | Set-Content -Path "$($Env:GITHUB_WORKSPACE)\deploy_results.json"
 
       - name: Notify Teams on Success
         if: ${{ success() }}
         shell: pwsh
         run: |
-          $envList = $Env:APIGEE_ENVS.Split(',')
-          $table = "| API Proxy Name | Environment | Revision Number |`n|---|---|---|`n"
-          foreach ($envName in $envList) {
-              $table += "| $($Env:API_NAME) | $envName | $($Env:APIGEE_REVISION) |`n"
-          }
+          $deployResults = Get-Content "$($Env:GITHUB_WORKSPACE)\deploy_results.json" | ConvertFrom-Json
+          $rows = $deployResults | ForEach-Object { "<tr><td>$($_.Proxy)</td><td>$($_.Environment)</td><td>$($_.Revision)</td></tr>" } -join ""
+          $htmlTable = "<table border='1' cellspacing='0' cellpadding='5'><tr><th>API Proxy Name</th><th>Environment</th><th>Revision</th></tr>$rows</table>"
           $payload = @{
-              text = "Apigee Proxy deployed successfully:`n$table"
-          } | ConvertTo-Json
+              text = "Apigee deployment completed successfully."
+              attachments = @(@{ contentType = "application/vnd.microsoft.card.adaptive"; content = @{ type = "AdaptiveCard"; version = "1.0"; body = @(@{ type = "TextBlock"; text = "Deployment Summary"; weight = "Bolder"; size = "Medium" }, @{ type = "TextBlock"; text = $htmlTable; wrap = true }) } })
+          } | ConvertTo-Json -Depth 4
           Invoke-RestMethod -Uri $Env:TEAMS_WEBHOOK_URL -Method Post -Body $payload -ContentType 'application/json'
 
       - name: Notify Teams on Failure
@@ -127,6 +134,6 @@ jobs:
         shell: pwsh
         run: |
           $payload = @{
-              text = "Apigee Proxy $($Env:API_NAME) deployment failed. Please check the logs."
+              text = "Apigee deployment failed for $($Env:API_NAME). Please check the workflow logs."
           } | ConvertTo-Json
           Invoke-RestMethod -Uri $Env:TEAMS_WEBHOOK_URL -Method Post -Body $payload -ContentType 'application/json'
