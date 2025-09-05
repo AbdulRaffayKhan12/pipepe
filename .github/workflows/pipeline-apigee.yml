@@ -108,7 +108,6 @@ jobs:
           for envName in $envList; do
             curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
-            
             results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
           done
           echo "$results" > "${{ github.workspace }}/deploy_results.json"
@@ -143,10 +142,7 @@ jobs:
           done
           testTable="<table border='1'><tr><th>Test Name</th><th>Status</th><th>Assertions</th></tr>$testRows</table>"
 
-          # Escape safely for JSON
-          deployEscaped=$(jq -Rn --arg v "$deployTable" '$v')
-          testEscaped=$(jq -Rn --arg v "$testTable" '$v')
-
+          # Escape HTML for Teams JSON
           payload=$(jq -n \
             --arg deploy "$deployTable" \
             --arg tests "$testTable" \
