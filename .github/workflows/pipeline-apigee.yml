@@ -108,7 +108,6 @@ jobs:
           for envName in $envList; do
             curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
-            
             results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
           done
           echo "$results" > "${{ github.workspace }}/deploy_results.json"
@@ -116,7 +115,7 @@ jobs:
       - name: Send Teams Notification
         if: always()
         run: |
-          # Build Deployment Table
+          # Deployment Table
           results=$(cat "${{ github.workspace }}/deploy_results.json")
           rows=""
           for row in $(echo "$results" | jq -c '.[]'); do
@@ -128,34 +127,42 @@ jobs:
           done
           deployTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
 
-          # Build Test Results Table
+          # Test Results Table
           testResults=$(cat "${{ github.workspace }}/newman-results.json")
           testRows=""
           for exec in $(echo "$testResults" | jq -c '.run.executions[]'); do
             name=$(echo $exec | jq -r '.item.name')
             assertions=$(echo $exec | jq -r '.assertions | length')
             failed=$(echo $exec | jq -r '[.assertions[] | select(.error!=null)] | length')
-            status=" Passed"
+            status="✅ Passed"
             color="green"
             if [ "$failed" -gt 0 ]; then
-              status=" Failed"
+              status="❌ Failed"
               color="red"
             fi
             testRows="$testRows<tr><td>$name</td><td><font color=\"$color\">$status</font></td><td>$assertions</td></tr>"
           done
           testTable="<table border='1'><tr><th>Test Name</th><th>Status</th><th>Assertions</th></tr>$testRows</table>"
 
-          # Send to Teams
-          payload="{
-            \"@type\": \"MessageCard\",
-            \"@context\": \"http://schema.org/extensions\",
-            \"summary\": \"Apigee Deployment\",
-            \"themeColor\": \"0076D7\",
-            \"title\": \"Apigee Deployment Notification\",
-            \"sections\": [
-              { \"activityTitle\": \"Deployment Details\", \"text\": \"$deployTable\" },
-              { \"activityTitle\": \"Test Results\", \"text\": \"$testTable\" }
-            ]
-          }"
+          # Escape tables for JSON
+          deployEscaped=$(echo "$deployTable" | jq -Rs .)
+          testEscaped=$(echo "$testTable" | jq -Rs .)
+
+          # Build payload safely
+          payload=$(jq -n \
+            --arg deploy "$deployEscaped" \
+            --arg tests "$testEscaped" \
+            '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "summary": "Apigee Deployment",
+              "themeColor": "0076D7",
+              "title": "Apigee Deployment Notification",
+              "sections": [
+                { "activityTitle": "Deployment Details", "text": ($deploy | fromjson) },
+                { "activityTitle": "Test Results", "text": ($tests | fromjson) }
+              ]
+            }')
+
           echo "$payload" > payload.json
           curl -H "Content-Type: application/json" -d @payload.json $TEAMS_WEBHOOK
