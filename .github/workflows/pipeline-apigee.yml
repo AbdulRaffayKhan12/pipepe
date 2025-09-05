@@ -108,6 +108,7 @@ jobs:
           for envName in $envList; do
             curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
+            
             results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
           done
           echo "$results" > "${{ github.workspace }}/deploy_results.json"
@@ -135,23 +136,20 @@ jobs:
             assertions=$(echo $exec | jq -r '.assertions | length')
             failed=$(echo $exec | jq -r '[.assertions[] | select(.error!=null)] | length')
             status="✅ Passed"
-            color="green"
             if [ "$failed" -gt 0 ]; then
               status="❌ Failed"
-              color="red"
             fi
-            testRows="$testRows<tr><td>$name</td><td><font color=\"$color\">$status</font></td><td>$assertions</td></tr>"
+            testRows="$testRows<tr><td>$name</td><td>$status</td><td>$assertions</td></tr>"
           done
           testTable="<table border='1'><tr><th>Test Name</th><th>Status</th><th>Assertions</th></tr>$testRows</table>"
 
-          # Escape tables for JSON
-          deployEscaped=$(echo "$deployTable" | jq -Rs .)
-          testEscaped=$(echo "$testTable" | jq -Rs .)
+          # Escape safely for JSON
+          deployEscaped=$(jq -Rn --arg v "$deployTable" '$v')
+          testEscaped=$(jq -Rn --arg v "$testTable" '$v')
 
-          # Build payload safely
           payload=$(jq -n \
-            --arg deploy "$deployEscaped" \
-            --arg tests "$testEscaped" \
+            --arg deploy "$deployTable" \
+            --arg tests "$testTable" \
             '{
               "@type": "MessageCard",
               "@context": "http://schema.org/extensions",
@@ -159,8 +157,8 @@ jobs:
               "themeColor": "0076D7",
               "title": "Apigee Deployment Notification",
               "sections": [
-                { "activityTitle": "Deployment Details", "text": ($deploy | fromjson) },
-                { "activityTitle": "Test Results", "text": ($tests | fromjson) }
+                { "activityTitle": "Deployment Details", "text": $deploy },
+                { "activityTitle": "Test Results", "text": $tests }
               ]
             }')
 
