@@ -19,6 +19,8 @@ jobs:
       ORG_CONFIG_PATH: org-config.txt
       ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
       TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/6e279d38-a82e-425d-bc2a-c1f8a54d60c2@51f97e66-3fe9-450d-88ac-7a2380c3f3c6/IncomingWebhook/2a86cd093d72455cafb0503fc1adf50d/4932dba3-6bfd-4d5f-9fcf-fe74385690e2/V2pRIdhyjxtMj7YaQ2JRYfggpvLkxjSuwU_gaoZ4ILnjc1
+      POSTMAN_COLLECTION_UID: 40041998-dee7eec2-5d39-49da-b172-2c535588dfc8
+      POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
 
     steps:
       - name: Checkout Repository
@@ -26,35 +28,35 @@ jobs:
 
       - name: Load Org and Env Config
         id: org-config
-        shell: pwsh
         run: |
-          $configText = Get-Content "${{ env.ORG_CONFIG_PATH }}" | ForEach-Object { $_.Trim() }
-          $orgLine = $configText | Where-Object { $_ -like 'org=*' }
-          $envLine = $configText | Where-Object { $_ -like 'env=*' }
-          if (-not $orgLine -or -not $envLine) {
-              Write-Error "Missing org or env entry in org-config.txt"
+          configText=$(cat "${{ env.ORG_CONFIG_PATH }}" | xargs)
+          org=$(echo "$configText" | grep -o 'org=[^ ]*' | cut -d= -f2)
+          envs=$(echo "$configText" | grep -o 'env=[^ ]*' | cut -d= -f2)
+
+          if [ -z "$org" ] || [ -z "$envs" ]; then
+            echo "Missing org or env entry in org-config.txt"
+            exit 1
+          fi
+
+          case "$org" in
+            "abacus-apigee-demo")
+              provider="projects/180599253937/locations/global/workloadIdentityPools/demo-pool/providers/demo-github"
+              sa="raffay-check@abacus-apigee-demo.iam.gserviceaccount.com"
+              ;;
+            "abacus-apigee-demo2")
+              provider="projects/738158130399/locations/global/workloadIdentityPools/demo2-pool/providers/demo2-github"
+              sa="raffay-cicd@abacus-apigee-demo2.iam.gserviceaccount.com"
+              ;;
+            *)
+              echo "Unsupported org: $org"
               exit 1
-          }
-          $org = $orgLine -replace '^org=', ''
-          $environments = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
-          switch ($org) {
-            "abacus-apigee-demo" {
-              $provider = "projects/180599253937/locations/global/workloadIdentityPools/demo-pool/providers/demo-github"
-              $sa = "raffay-check@abacus-apigee-demo.iam.gserviceaccount.com"
-            }
-            "abacus-apigee-demo2" {
-              $provider = "projects/738158130399/locations/global/workloadIdentityPools/demo2-pool/providers/demo2-github"
-              $sa = "raffay-cicd@abacus-apigee-demo2.iam.gserviceaccount.com"
-            }
-            default {
-              Write-Error "Unsupported org: $org"
-              exit 1
-            }
-          }
-          Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ORG=$org"
-          Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ENVS=$($environments -join ',')"
-          Add-Content -Path $env:GITHUB_ENV -Value "WIF_PROVIDER=$provider"
-          Add-Content -Path $env:GITHUB_ENV -Value "SERVICE_ACCOUNT=$sa"
+              ;;
+          esac
+
+          echo "APIGEE_ORG=$org" >> $GITHUB_ENV
+          echo "APIGEE_ENVS=$envs" >> $GITHUB_ENV
+          echo "WIF_PROVIDER=$provider" >> $GITHUB_ENV
+          echo "SERVICE_ACCOUNT=$sa" >> $GITHUB_ENV
 
       - name: Authenticate to Google Cloud (WIF)
         id: auth
@@ -65,66 +67,73 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
+      - name: Cache Newman
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-newman
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Install Newman
+        run: npm install -g newman
+
+      - name: Run Postman Tests
+        run: |
+          newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}"
+
       - name: Zip Proxy
         run: |
           zip -r "${{ env.ZIP_PATH }}" apiproxy
 
-      - name: Install and Cache Newman
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-          cache: 'npm'
-
-      - run: npm install -g newman
-
-      - name: Run Newman Tests
-        run: |
-          newman run "https://api.getpostman.com/collections/dee7eec2-5d39-49da-b172-2c535588dfc8?apikey=${{ secrets.POSTMAN_API_KEY }}"
-
       - name: Import Apigee Proxy
-        shell: pwsh
         run: |
-          $org = $Env:APIGEE_ORG
-          $zipFile = $Env:ZIP_PATH
-          $token = "${{ steps.auth.outputs.access_token }}"
-          $importResponseFile = "${{ github.workspace }}/import_response.json"
-          Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$($Env:API_NAME)" `
-            -Method POST -InFile $zipFile -Headers @{ Authorization = "Bearer $token"; "Content-Type"="application/octet-stream" } `
-            -OutFile $importResponseFile
-          $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
-          Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_REVISION=$revision"
+          org=$APIGEE_ORG
+          zipFile=$ZIP_PATH
+          token="${{ steps.auth.outputs.access_token }}"
+          importResponseFile="${{ github.workspace }}/import_response.json"
+
+          curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$API_NAME" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @"$zipFile" \
+            -o "$importResponseFile"
+
+          revision=$(cat "$importResponseFile" | jq -r '.revision')
+          echo "APIGEE_REVISION=$revision" >> $GITHUB_ENV
 
       - name: Deploy Apigee Proxy
-        shell: pwsh
         run: |
-          $org = $Env:APIGEE_ORG
-          $revision = $Env:APIGEE_REVISION
-          $token = "${{ steps.auth.outputs.access_token }}"
-          $envList = $Env:APIGEE_ENVS.Split(',')
-          $deployResults = @()
-          foreach ($envName in $envList) {
-              Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$($Env:API_NAME)/revisions/$revision/deployments?override=true" `
-                -Method POST -Headers @{ Authorization = "Bearer $token" }
-              $deployResults += [PSCustomObject]@{
-                  Proxy = $Env:API_NAME
-                  Environment = $envName
-                  Revision = $revision
-                  Organization = $org
-              }
-          }
-          $deployResults | ConvertTo-Json | Set-Content "$($Env:GITHUB_WORKSPACE)/deploy_results.json"
+          org=$APIGEE_ORG
+          revision=$APIGEE_REVISION
+          token="${{ steps.auth.outputs.access_token }}"
+          envList=$(echo $APIGEE_ENVS | tr ',' ' ')
+          results="[]"
+
+          for envName in $envList; do
+            curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
+              -H "Authorization: Bearer $token"
+            
+            results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
+          done
+
+          echo "$results" > "${{ github.workspace }}/deploy_results.json"
 
       - name: Send Teams Notification
         if: always()
-        shell: pwsh
         run: |
-          $deployResults = Get-Content "$($Env:GITHUB_WORKSPACE)/deploy_results.json" | ConvertFrom-Json
-          $rowsArray = $deployResults | ForEach-Object { "<tr><td>$($_.Proxy)</td><td>$($_.Environment)</td><td>$($_.Revision)</td><td>$($_.Organization)</td></tr>" }
-          $rows = $rowsArray -join ""
-          $htmlTable = "<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
-          $status = if ($deployResults) { "Deployment Succeeded" } else { "Deployment Failed" }
-          $payload = @{
-              title = "Apigee Deployment Notification"
-              text  = "$status<br>$htmlTable"
-          } | ConvertTo-Json -Compress
-          Invoke-RestMethod -Uri $Env:TEAMS_WEBHOOK -Method POST -ContentType 'application/json' -Body $payload
+          results=$(cat "${{ github.workspace }}/deploy_results.json")
+          rows=""
+          for row in $(echo "$results" | jq -c '.[]'); do
+            proxy=$(echo $row | jq -r '.Proxy')
+            env=$(echo $row | jq -r '.Environment')
+            rev=$(echo $row | jq -r '.Revision')
+            org=$(echo $row | jq -r '.Organization')
+            rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
+          done
+
+          htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
+          status="Deployment completed"
+          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
+
+          curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
