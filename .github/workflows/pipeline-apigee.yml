@@ -80,8 +80,7 @@ jobs:
 
       - name: Run Postman Tests
         run: |
-          newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
-            --reporters json --reporter-json-export "${{ github.workspace }}/newman-results.json"
+          newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}"
 
       - name: Zip Proxy
         run: |
@@ -123,35 +122,18 @@ jobs:
       - name: Send Teams Notification
         if: always()
         run: |
-          # Deployment table
           results=$(cat "${{ github.workspace }}/deploy_results.json")
-          deployRows=""
+          rows=""
           for row in $(echo "$results" | jq -c '.[]'); do
             proxy=$(echo $row | jq -r '.Proxy')
             env=$(echo $row | jq -r '.Environment')
             rev=$(echo $row | jq -r '.Revision')
             org=$(echo $row | jq -r '.Organization')
-            deployRows="$deployRows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
+            rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
           done
-          deployTable="<h3>Deployment Details</h3><table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$deployRows</table>"
 
-          # Test results table
-          testResults=$(cat "${{ github.workspace }}/newman-results.json")
-          testRows=""
-          for exec in $(echo "$testResults" | jq -c '.run.executions[]'); do
-            name=$(echo $exec | jq -r '.item.name')
-            assertions=$(echo $exec | jq -r '.assertions | length')
-            failed=$(echo $exec | jq -r '[.assertions[] | select(.error!=null)] | length')
-            status="Passed"
-            if [ "$failed" -gt 0 ]; then
-              status="Failed"
-            fi
-            testRows="$testRows<tr><td>$name</td><td>$status</td><td>$assertions</td></tr>"
-          done
-          testTable="<h3>Test Results</h3><table border='1'><tr><th>Test Name</th><th>Status</th><th>Assertions</th></tr>$testRows</table>"
-
-          # Final payload
-          status="Deployment & Tests completed"
-          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$deployTable<br>$testTable\"}"
+          htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
+          status="Deployment completed"
+          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
 
           curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
