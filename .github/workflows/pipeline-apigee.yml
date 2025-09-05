@@ -12,14 +12,13 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     env:
       API_NAME: reverse-pipeline1
       PROXY_NAME: apiproxy
       ORG_CONFIG_PATH: org-config.txt
       ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
       TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/6e279d38-a82e-425d-bc2a-c1f8a54d60c2@51f97e66-3fe9-450d-88ac-7a2380c3f3c6/IncomingWebhook/2a86cd093d72455cafb0503fc1adf50d/4932dba3-6bfd-4d5f-9fcf-fe74385690e2/V2pRIdhyjxtMj7YaQ2JRYfggpvLkxjSuwU_gaoZ4ILnjc1
-      POSTMAN_COLLECTION_UID: 40041998-dee7eec2-5d39-49da-b172-2c535588dfc8
 
     steps:
       - name: Checkout Repository
@@ -67,13 +66,20 @@ jobs:
           export_environment_variables: false
 
       - name: Zip Proxy
-        shell: pwsh
         run: |
-          $zipPath = "${{ env.ZIP_PATH }}"
-          if (Test-Path $zipPath) { Remove-Item $zipPath }
-          Push-Location ${{ github.workspace }}
-          tar -a -c -f $zipPath apiproxy
-          Pop-Location
+          zip -r "${{ env.ZIP_PATH }}" apiproxy
+
+      - name: Install and Cache Newman
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+
+      - run: npm install -g newman
+
+      - name: Run Newman Tests
+        run: |
+          newman run "https://api.getpostman.com/collections/dee7eec2-5d39-49da-b172-2c535588dfc8?apikey=${{ secrets.POSTMAN_API_KEY }}"
 
       - name: Import Apigee Proxy
         shell: pwsh
@@ -81,28 +87,12 @@ jobs:
           $org = $Env:APIGEE_ORG
           $zipFile = $Env:ZIP_PATH
           $token = "${{ steps.auth.outputs.access_token }}"
-          $importResponseFile = "${{ github.workspace }}\import_response.json"
+          $importResponseFile = "${{ github.workspace }}/import_response.json"
           Invoke-WebRequest -Uri "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$($Env:API_NAME)" `
             -Method POST -InFile $zipFile -Headers @{ Authorization = "Bearer $token"; "Content-Type"="application/octet-stream" } `
             -OutFile $importResponseFile
           $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_REVISION=$revision"
-
-      # Cache Newman installation
-      - name: Cache npm packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-npm-newman
-          restore-keys: |
-            ${{ runner.os }}-npm-
-
-      - name: Install Newman
-        run: npm install -g newman
-
-      - name: Run Newman Tests
-        run: |
-          newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ secrets.POSTMAN_API_KEY }}"
 
       - name: Deploy Apigee Proxy
         shell: pwsh
@@ -117,21 +107,21 @@ jobs:
                 -Method POST -Headers @{ Authorization = "Bearer $token" }
               $deployResults += [PSCustomObject]@{
                   Proxy = $Env:API_NAME
-                  Organization = $Env:APIGEE_ORG
                   Environment = $envName
                   Revision = $revision
+                  Organization = $org
               }
           }
-          $deployResults | ConvertTo-Json | Set-Content "$($Env:GITHUB_WORKSPACE)\deploy_results.json"
+          $deployResults | ConvertTo-Json | Set-Content "$($Env:GITHUB_WORKSPACE)/deploy_results.json"
 
       - name: Send Teams Notification
         if: always()
         shell: pwsh
         run: |
-          $deployResults = Get-Content "$($Env:GITHUB_WORKSPACE)\deploy_results.json" | ConvertFrom-Json
-          $rowsArray = $deployResults | ForEach-Object { "<tr><td>$($_.Proxy)</td><td>$($_.Organization)</td><td>$($_.Environment)</td><td>$($_.Revision)</td></tr>" }
+          $deployResults = Get-Content "$($Env:GITHUB_WORKSPACE)/deploy_results.json" | ConvertFrom-Json
+          $rowsArray = $deployResults | ForEach-Object { "<tr><td>$($_.Proxy)</td><td>$($_.Environment)</td><td>$($_.Revision)</td><td>$($_.Organization)</td></tr>" }
           $rows = $rowsArray -join ""
-          $htmlTable = "<table border='1'><tr><th>API Proxy</th><th>Organization</th><th>Environment</th><th>Revision</th></tr>$rows</table>"
+          $htmlTable = "<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
           $status = if ($deployResults) { "Deployment Succeeded" } else { "Deployment Failed" }
           $payload = @{
               title = "Apigee Deployment Notification"
