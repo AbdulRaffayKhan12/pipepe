@@ -18,7 +18,7 @@ jobs:
       PROXY_NAME: apiproxy
       ORG_CONFIG_PATH: org-config.txt
       ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
-      TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/xxxxx
+      TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/6e279d38-a82e-425d-bc2a-c1f8a54d60c2@51f97e66-3fe9-450d-88ac-7a2380c3f3c6/IncomingWebhook/2a86cd093d72455cafb0503fc1adf50d/4932dba3-6bfd-4d5f-9fcf-fe74385690e2/V2pRIdhyjxtMj7YaQ2JRYfggpvLkxjSuwU_gaoZ4ILnjc1
       POSTMAN_COLLECTION_UID: 40041998-dee7eec2-5d39-49da-b172-2c535588dfc8
       POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
 
@@ -78,7 +78,7 @@ jobs:
       - name: Run Postman Tests
         run: |
           newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
-            --reporters cli,json --reporter-json-export "${{ github.workspace }}/newman_report.json"
+            --reporters cli,json --reporter-json-export "${{ github.workspace }}/newman-results.json"
 
       - name: Zip Proxy
         run: |
@@ -116,33 +116,46 @@ jobs:
       - name: Send Teams Notification
         if: always()
         run: |
-          # Deployment results table
+          # Build Deployment Table
           results=$(cat "${{ github.workspace }}/deploy_results.json")
-          deployRows=""
+          rows=""
           for row in $(echo "$results" | jq -c '.[]'); do
             proxy=$(echo $row | jq -r '.Proxy')
             env=$(echo $row | jq -r '.Environment')
             rev=$(echo $row | jq -r '.Revision')
             org=$(echo $row | jq -r '.Organization')
-            deployRows="$deployRows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
+            rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
           done
-          deployTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$deployRows</table>"
+          deployTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
 
-          # Test results table
-          testFile="${{ github.workspace }}/newman_report.json"
-          if [ -f "$testFile" ]; then
-            total=$(jq '.run.stats.tests.total' $testFile)
-            failed=$(jq '.run.stats.tests.failed' $testFile)
-            passed=$((total - failed))
-            color="<span style='color:green'>$passed</span>/<span style='color:red'>$failed</span>"
+          # Build Test Results Table
+          testResults=$(cat "${{ github.workspace }}/newman-results.json")
+          testRows=""
+          for exec in $(echo "$testResults" | jq -c '.run.executions[]'); do
+            name=$(echo $exec | jq -r '.item.name')
+            assertions=$(echo $exec | jq -r '.assertions | length')
+            failed=$(echo $exec | jq -r '[.assertions[] | select(.error!=null)] | length')
+            status=" Passed"
+            color="green"
+            if [ "$failed" -gt 0 ]; then
+              status=" Failed"
+              color="red"
+            fi
+            testRows="$testRows<tr><td>$name</td><td><font color=\"$color\">$status</font></td><td>$assertions</td></tr>"
+          done
+          testTable="<table border='1'><tr><th>Test Name</th><th>Status</th><th>Assertions</th></tr>$testRows</table>"
 
-            testTable="<table border='1'><tr><th>Total</th><th>Passed</th><th>Failed</th></tr><tr><td>$total</td><td><span style='color:green'>$passed</span></td><td><span style='color:red'>$failed</span></td></tr></table>"
-          else
-            testTable="No test results found."
-          fi
-
-          # Build payload
-          status="Pipeline Completed"
-          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br><br><b>Deployment Details</b><br>$deployTable<br><br><b>Test Results</b><br>$testTable\"}"
-
-          curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
+          # Send to Teams
+          payload="{
+            \"@type\": \"MessageCard\",
+            \"@context\": \"http://schema.org/extensions\",
+            \"summary\": \"Apigee Deployment\",
+            \"themeColor\": \"0076D7\",
+            \"title\": \"Apigee Deployment Notification\",
+            \"sections\": [
+              { \"activityTitle\": \"Deployment Details\", \"text\": \"$deployTable\" },
+              { \"activityTitle\": \"Test Results\", \"text\": \"$testTable\" }
+            ]
+          }"
+          echo "$payload" > payload.json
+          curl -H "Content-Type: application/json" -d @payload.json $TEAMS_WEBHOOK
