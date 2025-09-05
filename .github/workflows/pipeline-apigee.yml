@@ -19,6 +19,7 @@ jobs:
       ORG_CONFIG_PATH: org-config.txt
       ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
       TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/6e279d38-a82e-425d-bc2a-c1f8a54d60c2@51f97e66-3fe9-450d-88ac-7a2380c3f3c6/IncomingWebhook/2a86cd093d72455cafb0503fc1adf50d/4932dba3-6bfd-4d5f-9fcf-fe74385690e2/V2pRIdhyjxtMj7YaQ2JRYfggpvLkxjSuwU_gaoZ4ILnjc1
+      POSTMAN_COLLECTION_UID: 40041998-dee7eec2-5d39-49da-b172-2c535588dfc8
 
     steps:
       - name: Checkout Repository
@@ -37,7 +38,6 @@ jobs:
           }
           $org = $orgLine -replace '^org=', ''
           $environments = ($envLine -replace '^env=', '').Split(',') | ForEach-Object { $_.Trim() }
-
           switch ($org) {
             "abacus-apigee-demo" {
               $provider = "projects/180599253937/locations/global/workloadIdentityPools/demo-pool/providers/demo-github"
@@ -52,7 +52,6 @@ jobs:
               exit 1
             }
           }
-
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ORG=$org"
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_ENVS=$($environments -join ',')"
           Add-Content -Path $env:GITHUB_ENV -Value "WIF_PROVIDER=$provider"
@@ -88,6 +87,11 @@ jobs:
             -OutFile $importResponseFile
           $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_REVISION=$revision"
+
+      - name: Run Newman Tests
+        run: |
+          npm install -g newman
+          newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ secrets.POSTMAN_API_KEY }}"
 
       - name: Deploy Apigee Proxy
         shell: pwsh
