@@ -88,9 +88,20 @@ jobs:
           $revision = (Get-Content $importResponseFile | ConvertFrom-Json).revision
           Add-Content -Path $env:GITHUB_ENV -Value "APIGEE_REVISION=$revision"
 
+      # Cache Newman installation
+      - name: Cache npm packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-newman
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Install Newman
+        run: npm install -g newman
+
       - name: Run Newman Tests
         run: |
-          npm install -g newman
           newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ secrets.POSTMAN_API_KEY }}"
 
       - name: Deploy Apigee Proxy
@@ -106,6 +117,7 @@ jobs:
                 -Method POST -Headers @{ Authorization = "Bearer $token" }
               $deployResults += [PSCustomObject]@{
                   Proxy = $Env:API_NAME
+                  Organization = $Env:APIGEE_ORG
                   Environment = $envName
                   Revision = $revision
               }
@@ -117,9 +129,9 @@ jobs:
         shell: pwsh
         run: |
           $deployResults = Get-Content "$($Env:GITHUB_WORKSPACE)\deploy_results.json" | ConvertFrom-Json
-          $rowsArray = $deployResults | ForEach-Object { "<tr><td>$($_.Proxy)</td><td>$($_.Environment)</td><td>$($_.Revision)</td></tr>" }
+          $rowsArray = $deployResults | ForEach-Object { "<tr><td>$($_.Proxy)</td><td>$($_.Organization)</td><td>$($_.Environment)</td><td>$($_.Revision)</td></tr>" }
           $rows = $rowsArray -join ""
-          $htmlTable = "<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th></tr>$rows</table>"
+          $htmlTable = "<table border='1'><tr><th>API Proxy</th><th>Organization</th><th>Environment</th><th>Revision</th></tr>$rows</table>"
           $status = if ($deployResults) { "Deployment Succeeded" } else { "Deployment Failed" }
           $payload = @{
               title = "Apigee Deployment Notification"
