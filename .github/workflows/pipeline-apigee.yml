@@ -126,7 +126,7 @@ jobs:
             org=$(echo $row | jq -r '.Organization')
             rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
           done
-          deployTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
+          deployTable="<table border='1' style='border-collapse:collapse'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
 
           # Test Results Table
           testResults=$(cat "${{ github.workspace }}/newman-results.json")
@@ -141,16 +141,12 @@ jobs:
             fi
             testRows="$testRows<tr><td>$name</td><td>$status</td><td>$assertions</td></tr>"
           done
-          testTable="<table border='1'><tr><th>Test Name</th><th>Status</th><th>Assertions</th></tr>$testRows</table>"
+          testTable="<table border='1' style='border-collapse:collapse'><tr><th>Test Name</th><th>Status</th><th>Assertions</th></tr>$testRows</table>"
 
-          # Encode to safe JSON strings
-          deployEncoded=$(echo "$deployTable" | base64 -w0)
-          testsEncoded=$(echo "$testTable" | base64 -w0)
-
-          # Build payload safely
+          # Save payload with two tables
           payload=$(jq -n \
-            --arg deploy "$deployEncoded" \
-            --arg tests "$testsEncoded" \
+            --arg deploy "$deployTable" \
+            --arg tests "$testTable" \
             '{
               "@type": "MessageCard",
               "@context": "http://schema.org/extensions",
@@ -158,8 +154,8 @@ jobs:
               "themeColor": "0076D7",
               "title": "Apigee Deployment Notification",
               "sections": [
-                { "activityTitle": "Deployment Details", "text": ($deploy | @base64d) },
-                { "activityTitle": "Test Results", "text": ($tests | @base64d) }
+                { "activityTitle": "Deployment Details", "text": $deploy },
+                { "activityTitle": "Test Results", "text": $tests }
               ]
             }')
 
