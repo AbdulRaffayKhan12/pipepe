@@ -143,10 +143,14 @@ jobs:
           done
           testTable="<table border='1' style='border-collapse:collapse'><tr><th>Test Name</th><th>Status</th><th>Assertions</th></tr>$testRows</table>"
 
-          # Save payload with two tables
+          # Encode safely
+          deployEncoded=$(echo "$deployTable" | base64 -w0)
+          testEncoded=$(echo "$testTable" | base64 -w0)
+
+          # Build JSON with jq
           payload=$(jq -n \
-            --arg deploy "$deployTable" \
-            --arg tests "$testTable" \
+            --arg deploy "$deployEncoded" \
+            --arg tests "$testEncoded" \
             '{
               "@type": "MessageCard",
               "@context": "http://schema.org/extensions",
@@ -154,8 +158,8 @@ jobs:
               "themeColor": "0076D7",
               "title": "Apigee Deployment Notification",
               "sections": [
-                { "activityTitle": "Deployment Details", "text": $deploy },
-                { "activityTitle": "Test Results", "text": $tests }
+                { "activityTitle": "Deployment Details", "text": ($deploy | @base64d) },
+                { "activityTitle": "Test Results", "text": ($tests | @base64d) }
               ]
             }')
 
