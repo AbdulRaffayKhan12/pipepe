@@ -116,41 +116,35 @@ jobs:
       - name: Send Teams Notification
         if: always()
         run: |
-          # Deployment Table
+          # Build Deployment Table
           results=$(cat "${{ github.workspace }}/deploy_results.json")
-          rows=""
+          deployTable="| API Proxy | Environment | Revision | Organization |\n|-----------|-------------|----------|---------------|"
           for row in $(echo "$results" | jq -c '.[]'); do
             proxy=$(echo $row | jq -r '.Proxy')
             env=$(echo $row | jq -r '.Environment')
             rev=$(echo $row | jq -r '.Revision')
             org=$(echo $row | jq -r '.Organization')
-            rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
+            deployTable="$deployTable\n| $proxy | $env | $rev | $org |"
           done
-          deployTable="<table border='1' style='border-collapse:collapse'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
 
-          # Test Results Table
+          # Build Test Results Table
           testResults=$(cat "${{ github.workspace }}/newman-results.json")
-          testRows=""
+          testTable="| Test Name | Status | Assertions |\n|-----------|--------|------------|"
           for exec in $(echo "$testResults" | jq -c '.run.executions[]'); do
             name=$(echo $exec | jq -r '.item.name')
             assertions=$(echo $exec | jq -r '.assertions | length')
             failed=$(echo $exec | jq -r '[.assertions[] | select(.error!=null)] | length')
-            status="✅ Passed"
+            status="Passed"
             if [ "$failed" -gt 0 ]; then
-              status="❌ Failed"
+              status="Failed"
             fi
-            testRows="$testRows<tr><td>$name</td><td>$status</td><td>$assertions</td></tr>"
+            testTable="$testTable\n| $name | $status | $assertions |"
           done
-          testTable="<table border='1' style='border-collapse:collapse'><tr><th>Test Name</th><th>Status</th><th>Assertions</th></tr>$testRows</table>"
 
-          # Encode safely
-          deployEncoded=$(echo "$deployTable" | base64 -w0)
-          testEncoded=$(echo "$testTable" | base64 -w0)
-
-          # Build JSON with jq
+          # Send to Teams
           payload=$(jq -n \
-            --arg deploy "$deployEncoded" \
-            --arg tests "$testEncoded" \
+            --arg t1 "### Deployment Details\n$deployTable" \
+            --arg t2 "### Test Results\n$testTable" \
             '{
               "@type": "MessageCard",
               "@context": "http://schema.org/extensions",
@@ -158,8 +152,8 @@ jobs:
               "themeColor": "0076D7",
               "title": "Apigee Deployment Notification",
               "sections": [
-                { "activityTitle": "Deployment Details", "text": ($deploy | @base64d) },
-                { "activityTitle": "Test Results", "text": ($tests | @base64d) }
+                { "text": $t1 },
+                { "text": $t2 }
               ]
             }')
 
