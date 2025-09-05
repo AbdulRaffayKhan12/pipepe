@@ -32,10 +32,12 @@ jobs:
           configText=$(cat "${{ env.ORG_CONFIG_PATH }}" | xargs)
           org=$(echo "$configText" | grep -o 'org=[^ ]*' | cut -d= -f2)
           envs=$(echo "$configText" | grep -o 'env=[^ ]*' | cut -d= -f2)
+
           if [ -z "$org" ] || [ -z "$envs" ]; then
             echo "Missing org or env entry in org-config.txt"
             exit 1
           fi
+
           case "$org" in
             "abacus-apigee-demo")
               provider="projects/180599253937/locations/global/workloadIdentityPools/demo-pool/providers/demo-github"
@@ -50,6 +52,7 @@ jobs:
               exit 1
               ;;
           esac
+
           echo "APIGEE_ORG=$org" >> $GITHUB_ENV
           echo "APIGEE_ENVS=$envs" >> $GITHUB_ENV
           echo "WIF_PROVIDER=$provider" >> $GITHUB_ENV
@@ -77,8 +80,7 @@ jobs:
 
       - name: Run Postman Tests
         run: |
-          newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
-            --reporters cli,json --reporter-json-export "${{ github.workspace }}/newman-results.json"
+          newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}"
 
       - name: Zip Proxy
         run: |
@@ -90,11 +92,13 @@ jobs:
           zipFile=$ZIP_PATH
           token="${{ steps.auth.outputs.access_token }}"
           importResponseFile="${{ github.workspace }}/import_response.json"
+
           curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$API_NAME" \
             -H "Authorization: Bearer $token" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @"$zipFile" \
             -o "$importResponseFile"
+
           revision=$(cat "$importResponseFile" | jq -r '.revision')
           echo "APIGEE_REVISION=$revision" >> $GITHUB_ENV
 
@@ -105,57 +109,31 @@ jobs:
           token="${{ steps.auth.outputs.access_token }}"
           envList=$(echo $APIGEE_ENVS | tr ',' ' ')
           results="[]"
+
           for envName in $envList; do
             curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
             
             results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
           done
+
           echo "$results" > "${{ github.workspace }}/deploy_results.json"
 
       - name: Send Teams Notification
         if: always()
         run: |
-          # Build Deployment Table
           results=$(cat "${{ github.workspace }}/deploy_results.json")
-          deployTable="| API Proxy | Environment | Revision | Organization |\n|-----------|-------------|----------|---------------|"
+          rows=""
           for row in $(echo "$results" | jq -c '.[]'); do
             proxy=$(echo $row | jq -r '.Proxy')
             env=$(echo $row | jq -r '.Environment')
             rev=$(echo $row | jq -r '.Revision')
             org=$(echo $row | jq -r '.Organization')
-            deployTable="$deployTable\n| $proxy | $env | $rev | $org |"
+            rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
           done
 
-          # Build Test Results Table
-          testResults=$(cat "${{ github.workspace }}/newman-results.json")
-          testTable="| Test Name | Status | Assertions |\n|-----------|--------|------------|"
-          for exec in $(echo "$testResults" | jq -c '.run.executions[]'); do
-            name=$(echo $exec | jq -r '.item.name')
-            assertions=$(echo $exec | jq -r '.assertions | length')
-            failed=$(echo $exec | jq -r '[.assertions[] | select(.error!=null)] | length')
-            status="Passed"
-            if [ "$failed" -gt 0 ]; then
-              status="Failed"
-            fi
-            testTable="$testTable\n| $name | $status | $assertions |"
-          done
+          htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
+          status="Deployment completed"
+          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
 
-          # Send to Teams
-          payload=$(jq -n \
-            --arg t1 "### Deployment Details\n$deployTable" \
-            --arg t2 "### Test Results\n$testTable" \
-            '{
-              "@type": "MessageCard",
-              "@context": "http://schema.org/extensions",
-              "summary": "Apigee Deployment",
-              "themeColor": "0076D7",
-              "title": "Apigee Deployment Notification",
-              "sections": [
-                { "text": $t1 },
-                { "text": $t2 }
-              ]
-            }')
-
-          echo "$payload" > payload.json
-          curl -H "Content-Type: application/json" -d @payload.json $TEAMS_WEBHOOK
+          curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
