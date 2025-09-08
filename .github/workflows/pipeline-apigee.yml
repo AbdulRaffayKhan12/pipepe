@@ -137,3 +137,8 @@ jobs:
           payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
 
           curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
+          else
+            status="Deployment failed for API Proxy: $API_NAME (Org: $APIGEE_ORG)"
+            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status\"}"
+          fi
+          curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
