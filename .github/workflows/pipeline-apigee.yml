@@ -67,44 +67,32 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      # Cache npm (Newman + reporters)
-      - name: Cache Newman + Reporters
-        uses: actions/cache@v3
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-npm-newman-reporter
-          restore-keys: |
-            ${{ runner.os }}-npm-
-
-      - name: Install Newman + Reporters (if missing)
+      # Install Newman + Reporter (always, no cache to avoid missing modules)
+      - name: Install Newman + Reporter
         run: |
-          if ! command -v newman >/dev/null 2>&1; then
-            npm install -g newman newman-reporter-htmlextra
-          fi
+          npm install -g newman newman-reporter-htmlextra
 
       - name: Run Postman Tests
         run: |
-          mkdir -p newman
+          mkdir -p reports
           newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
             --reporters cli,htmlextra \
-            --reporter-htmlextra-export newman/newman-report.html
+            --reporter-htmlextra-export reports/newman-report.html || true
 
-      - name: Debug – List files
+      - name: Debug – Check Reports
         if: always()
-        run: ls -R .
+        run: |
+          echo "Listing reports folder:"
+          ls -l reports || true
+          echo "Listing root folder:"
+          ls -l . || true
 
       - name: Upload Newman HTML Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: newman-html-report
-          path: newman/newman-report.html
-
-      - name: Add Newman Report Link to Summary
-        if: always()
-        run: |
-          echo "### ✅ Newman HTML Test Report" >> $GITHUB_STEP_SUMMARY
-          echo "👉 [Download Report from Artifacts](../artifacts/newman-html-report/newman-report.html)" >> $GITHUB_STEP_SUMMARY
+          path: reports/newman-report.html
 
       - name: Zip Proxy
         run: |
@@ -137,7 +125,7 @@ jobs:
           for envName in $envList; do
             curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
-            
+
             results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
           done
 
@@ -146,7 +134,7 @@ jobs:
       - name: Send Teams Notification
         if: always()
         run: |
-          if [ -f "${{ github.workspace }}/deploy_results.json" ] && [ -s "${{ github.workspace }}/deploy_results.json" ]; then
+          if [ -s "${{ github.workspace }}/deploy_results.json" ]; then
             results=$(cat "${{ github.workspace }}/deploy_results.json")
             rows=""
             for row in $(echo "$results" | jq -c '.[]'); do
@@ -159,9 +147,9 @@ jobs:
             htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
             status="Deployment completed"
           else
-            proxy="$API_NAME"
-            org="$APIGEE_ORG"
-            htmlTable="<p>❌ Deployment failed for proxy <b>$proxy</b> in org <b>$org</b></p>"
+            proxy=$API_NAME
+            org=$APIGEE_ORG
+            htmlTable="<tr><td colspan='4'>Deployment failed for proxy <b>$proxy</b> in org <b>$org</b></td></tr>"
             status="Deployment failed"
           fi
 
