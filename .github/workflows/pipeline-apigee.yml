@@ -21,6 +21,7 @@ jobs:
       TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/6e279d38-a82e-425d-bc2a-c1f8a54d60c2@51f97e66-3fe9-450d-88ac-7a2380c3f3c6/IncomingWebhook/2a86cd093d72455cafb0503fc1adf50d/4932dba3-6bfd-4d5f-9fcf-fe74385690e2/V2pRIdhyjxtMj7YaQ2JRYfggpvLkxjSuwU_gaoZ4ILnjc1
       POSTMAN_COLLECTION_UID: 40041998-dee7eec2-5d39-49da-b172-2c535588dfc8
       POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+      ACTIONS_CACHE_VERBOSE: false   # 🔇 hides noisy tar output
 
     steps:
       - name: Checkout Repository
@@ -67,18 +68,14 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      # ✅ Cache only Newman + reporter, quiet logs
-      - name: Cache Newman
+      # ✅ Cache npm (safe, small, quiet logs)
+      - name: Cache npm dependencies (Newman + reporters)
         uses: actions/cache@v3
-        env:
-          ACTIONS_CACHE_VERBOSE: false
         with:
-          path: |
-            /usr/local/lib/node_modules/newman
-            /usr/local/lib/node_modules/newman-reporter-htmlextra
-          key: ${{ runner.os }}-newman-v1
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-newman-v1
           restore-keys: |
-            ${{ runner.os }}-newman-
+            ${{ runner.os }}-npm-
 
       - name: Install Newman + Reporter (if missing)
         run: |
