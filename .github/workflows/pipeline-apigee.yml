@@ -32,12 +32,10 @@ jobs:
           configText=$(cat "${{ env.ORG_CONFIG_PATH }}" | xargs)
           org=$(echo "$configText" | grep -o 'org=[^ ]*' | cut -d= -f2)
           envs=$(echo "$configText" | grep -o 'env=[^ ]*' | cut -d= -f2)
-
           if [ -z "$org" ] || [ -z "$envs" ]; then
             echo "Missing org or env entry in org-config.txt"
             exit 1
           fi
-
           case "$org" in
             "abacus-apigee-demo")
               provider="projects/180599253937/locations/global/workloadIdentityPools/demo-pool/providers/demo-github"
@@ -52,7 +50,6 @@ jobs:
               exit 1
               ;;
           esac
-
           echo "APIGEE_ORG=$org" >> $GITHUB_ENV
           echo "APIGEE_ENVS=$envs" >> $GITHUB_ENV
           echo "WIF_PROVIDER=$provider" >> $GITHUB_ENV
@@ -92,13 +89,11 @@ jobs:
           zipFile=$ZIP_PATH
           token="${{ steps.auth.outputs.access_token }}"
           importResponseFile="${{ github.workspace }}/import_response.json"
-
           curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$API_NAME" \
             -H "Authorization: Bearer $token" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @"$zipFile" \
             -o "$importResponseFile"
-
           revision=$(cat "$importResponseFile" | jq -r '.revision')
           echo "APIGEE_REVISION=$revision" >> $GITHUB_ENV
 
@@ -109,34 +104,29 @@ jobs:
           token="${{ steps.auth.outputs.access_token }}"
           envList=$(echo $APIGEE_ENVS | tr ',' ' ')
           results="[]"
-
           for envName in $envList; do
             curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
-            
             results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
           done
-
           echo "$results" > "${{ github.workspace }}/deploy_results.json"
 
       - name: Send Teams Notification
         if: always()
         run: |
           results=$(cat "${{ github.workspace }}/deploy_results.json")
-          rows=""
-          for row in $(echo "$results" | jq -c '.[]'); do
-            proxy=$(echo $row | jq -r '.Proxy')
-            env=$(echo $row | jq -r '.Environment')
-            rev=$(echo $row | jq -r '.Revision')
-            org=$(echo $row | jq -r '.Organization')
-            rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
-          done
-
-          htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
-          status="Deployment completed"
-          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
-
-          curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
+          if [ -s "${{ github.workspace }}/deploy_results.json" ]; then
+            rows=""
+            for row in $(echo "$results" | jq -c '.[]'); do
+              proxy=$(echo $row | jq -r '.Proxy')
+              env=$(echo $row | jq -r '.Environment')
+              rev=$(echo $row | jq -r '.Revision')
+              org=$(echo $row | jq -r '.Organization')
+              rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
+            done
+            htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
+            status="Deployment completed"
+            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
           else
             status="Deployment failed for API Proxy: $API_NAME (Org: $APIGEE_ORG)"
             payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status\"}"
