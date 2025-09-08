@@ -79,9 +79,8 @@ jobs:
         run: |
           mkdir -p newman
           npx newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
-            --reporters cli,htmlextra,junit \
-            --reporter-htmlextra-export newman/newman-report.html \
-            --reporter-junit-export newman/newman-report.xml
+            --reporters cli,htmlextra \
+            --reporter-htmlextra-export newman/newman-report.html
 
       - name: Upload Test Reports
         if: always()
