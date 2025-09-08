@@ -77,7 +77,18 @@ jobs:
 
       - name: Run Postman Tests
         run: |
-          newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}"
+          mkdir -p newman
+          npx newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
+            --reporters cli,htmlextra,junit \
+            --reporter-htmlextra-export newman/newman-report.html \
+            --reporter-junit-export newman/newman-report.xml
+
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-test-reports
+          path: newman/
 
       - name: Zip Proxy
         run: |
