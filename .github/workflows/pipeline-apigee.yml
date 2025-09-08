@@ -32,10 +32,12 @@ jobs:
           configText=$(cat "${{ env.ORG_CONFIG_PATH }}" | xargs)
           org=$(echo "$configText" | grep -o 'org=[^ ]*' | cut -d= -f2)
           envs=$(echo "$configText" | grep -o 'env=[^ ]*' | cut -d= -f2)
+
           if [ -z "$org" ] || [ -z "$envs" ]; then
             echo "Missing org or env entry in org-config.txt"
             exit 1
           fi
+
           case "$org" in
             "abacus-apigee-demo")
               provider="projects/180599253937/locations/global/workloadIdentityPools/demo-pool/providers/demo-github"
@@ -50,6 +52,7 @@ jobs:
               exit 1
               ;;
           esac
+
           echo "APIGEE_ORG=$org" >> $GITHUB_ENV
           echo "APIGEE_ENVS=$envs" >> $GITHUB_ENV
           echo "WIF_PROVIDER=$provider" >> $GITHUB_ENV
@@ -64,23 +67,27 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      - name: Cache Newman
+      # ✅ Cache local node_modules (Newman + reporters)
+      - name: Cache node_modules
         uses: actions/cache@v3
         with:
-          path: ~/.npm
-          key: ${{ runner.os }}-npm-newman
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-npm-
+            ${{ runner.os }}-node-
 
-      - name: Install Newman
-        run: npm install -g newman
+      - name: Install Newman + Reporters
+        run: |
+          npm init -y >/dev/null 2>&1 || true
+          npm install newman newman-reporter-htmlextra
 
       - name: Run Postman Tests
         run: |
           mkdir -p newman
           npx newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
-            --reporters cli,htmlextra \
-            --reporter-htmlextra-export newman/newman-report.html
+            --reporters cli,htmlextra,junit \
+            --reporter-htmlextra-export newman/newman-report.html \
+            --reporter-junit-export newman/newman-report.xml
 
       - name: Upload Test Reports
         if: always()
@@ -99,11 +106,13 @@ jobs:
           zipFile=$ZIP_PATH
           token="${{ steps.auth.outputs.access_token }}"
           importResponseFile="${{ github.workspace }}/import_response.json"
+
           curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$API_NAME" \
             -H "Authorization: Bearer $token" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @"$zipFile" \
             -o "$importResponseFile"
+
           revision=$(cat "$importResponseFile" | jq -r '.revision')
           echo "APIGEE_REVISION=$revision" >> $GITHUB_ENV
 
@@ -114,18 +123,21 @@ jobs:
           token="${{ steps.auth.outputs.access_token }}"
           envList=$(echo $APIGEE_ENVS | tr ',' ' ')
           results="[]"
+
           for envName in $envList; do
             curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
+            
             results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
           done
+
           echo "$results" > "${{ github.workspace }}/deploy_results.json"
 
       - name: Send Teams Notification
         if: always()
         run: |
-          results=$(cat "${{ github.workspace }}/deploy_results.json")
           if [ -s "${{ github.workspace }}/deploy_results.json" ]; then
+            results=$(cat "${{ github.workspace }}/deploy_results.json")
             rows=""
             for row in $(echo "$results" | jq -c '.[]'); do
               proxy=$(echo $row | jq -r '.Proxy')
@@ -134,6 +146,7 @@ jobs:
               org=$(echo $row | jq -r '.Organization')
               rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
             done
+
             htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
             status="Deployment completed"
             payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
@@ -141,4 +154,5 @@ jobs:
             status="Deployment failed for API Proxy: $API_NAME (Org: $APIGEE_ORG)"
             payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status\"}"
           fi
+
           curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
