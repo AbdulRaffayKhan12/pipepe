@@ -67,10 +67,21 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      # Install Newman + Reporter (always, no cache to avoid missing modules)
-      - name: Install Newman + Reporter
+      # ✅ Cache global npm packages (Newman + reporters)
+      - name: Cache npm (Newman + Reporters)
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-newman-reporter-v1
+          restore-keys: |
+            ${{ runner.os }}-npm-
+          retention-days: 30
+
+      - name: Install Newman + Reporter (if missing)
         run: |
-          npm install -g newman newman-reporter-htmlextra
+          if ! command -v newman >/dev/null 2>&1; then
+            npm install -g newman newman-reporter-htmlextra
+          fi
 
       - name: Run Postman Tests
         run: |
