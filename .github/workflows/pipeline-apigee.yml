@@ -67,6 +67,7 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
+      # ✅ Cache local node_modules (Newman + reporters)
       - name: Cache node_modules
         uses: actions/cache@v3
         with:
@@ -126,6 +127,7 @@ jobs:
           for envName in $envList; do
             curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
+            
             results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
           done
 
@@ -144,6 +146,7 @@ jobs:
               org=$(echo $row | jq -r '.Organization')
               rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
             done
+
             htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
             status="Deployment completed"
             payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
