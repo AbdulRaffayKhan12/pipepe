@@ -67,17 +67,20 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      - name: Cache Newman
+      # Cache npm (Newman + reporters)
+      - name: Cache Newman + Reporters
         uses: actions/cache@v3
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-npm-newman
+          key: ${{ runner.os }}-npm-newman-reporter
           restore-keys: |
             ${{ runner.os }}-npm-
 
-      - name: Install Newman + Reporters
+      - name: Install Newman + Reporters (if missing)
         run: |
-          npm install -g newman newman-reporter-htmlextra
+          if ! command -v newman >/dev/null 2>&1; then
+            npm install -g newman newman-reporter-htmlextra
+          fi
 
       - name: Run Postman Tests
         run: |
