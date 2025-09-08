@@ -138,18 +138,25 @@ jobs:
       - name: Send Teams Notification
         if: always()
         run: |
-          results=$(cat "${{ github.workspace }}/deploy_results.json")
-          rows=""
-          for row in $(echo "$results" | jq -c '.[]'); do
-            proxy=$(echo $row | jq -r '.Proxy')
-            env=$(echo $row | jq -r '.Environment')
-            rev=$(echo $row | jq -r '.Revision')
-            org=$(echo $row | jq -r '.Organization')
-            rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
-          done
+          if [ "${{ job.status }}" == "success" ]; then
+            results=$(cat "${{ github.workspace }}/deploy_results.json")
+            rows=""
+            for row in $(echo "$results" | jq -c '.[]'); do
+              proxy=$(echo $row | jq -r '.Proxy')
+              env=$(echo $row | jq -r '.Environment')
+              rev=$(echo $row | jq -r '.Revision')
+              org=$(echo $row | jq -r '.Organization')
+              rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
+            done
 
-          htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
-          status="Deployment completed"
-          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
+            htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
+            status="Deployment completed"
+            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
+          else
+            proxy="${{ env.API_NAME }}"
+            org="${{ env.APIGEE_ORG }}"
+            status="Deployment failed for API Proxy: $proxy (Org: $org)"
+            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status\"}"
+          fi
 
           curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
