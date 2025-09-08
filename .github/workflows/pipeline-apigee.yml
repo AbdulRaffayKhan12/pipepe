@@ -67,16 +67,14 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      # ✅ Unified cache for npm local + global packages (Newman + reporters)
-      - name: Cache npm dependencies
+      # ✅ Cache only npm package tarballs (lightweight, <100MB typically)
+      - name: Cache Newman dependencies
         uses: actions/cache@v3
         with:
-          path: |
-            ~/.npm
-            /usr/local/lib/node_modules
-          key: ${{ runner.os }}-npm-dependencies-v1
+          path: ~/.npm
+          key: ${{ runner.os }}-newman-cache-v1
           restore-keys: |
-            ${{ runner.os }}-npm-
+            ${{ runner.os }}-newman-
 
       - name: Install Newman + Reporters (if missing)
         run: |
