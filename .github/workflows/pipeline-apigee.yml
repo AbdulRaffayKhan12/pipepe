@@ -67,32 +67,37 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      # Install Newman + Reporter (always, no cache to avoid missing modules)
-      - name: Install Newman + Reporter
+      # ✅ Unified cache for npm local + global packages (Newman + reporters)
+      - name: Cache npm dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            /usr/local/lib/node_modules
+          key: ${{ runner.os }}-npm-dependencies-v1
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Install Newman + Reporters (if missing)
         run: |
-          npm install -g newman newman-reporter-htmlextra
+          if ! command -v newman >/dev/null 2>&1; then
+            npm install -g newman newman-reporter-htmlextra
+          fi
 
       - name: Run Postman Tests
         run: |
-          mkdir -p reports
+          mkdir -p newman
           newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
-            --reporters cli,htmlextra \
-            --reporter-htmlextra-export reports/newman-report.html || true
+            --reporters cli,htmlextra,junit \
+            --reporter-htmlextra-export newman/newman-report.html \
+            --reporter-junit-export newman/newman-report.xml
 
-      - name: Debug – Check Reports
-        if: always()
-        run: |
-          echo "Listing reports folder:"
-          ls -l reports || true
-          echo "Listing root folder:"
-          ls -l . || true
-
-      - name: Upload Newman HTML Report
+      - name: Upload Test Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: newman-html-report
-          path: reports/newman-report.html
+          name: newman-test-reports
+          path: newman/
 
       - name: Zip Proxy
         run: |
@@ -125,7 +130,7 @@ jobs:
           for envName in $envList; do
             curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
-
+            
             results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
           done
 
@@ -144,14 +149,13 @@ jobs:
               org=$(echo $row | jq -r '.Organization')
               rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
             done
+
             htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
             status="Deployment completed"
+            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
           else
-            proxy=$API_NAME
-            org=$APIGEE_ORG
-            htmlTable="<tr><td colspan='4'>Deployment failed for proxy <b>$proxy</b> in org <b>$org</b></td></tr>"
-            status="Deployment failed"
+            status="Deployment failed for API Proxy: $API_NAME (Org: $APIGEE_ORG)"
+            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status\"}"
           fi
 
-          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
           curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
