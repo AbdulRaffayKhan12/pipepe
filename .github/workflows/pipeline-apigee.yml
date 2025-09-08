@@ -67,11 +67,13 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      # ✅ Unified cache for all npm dependencies (Newman + reporters)
-      - name: Cache npm dependencies (Newman + reporters)
+      # ✅ Unified cache for npm local + global packages (Newman + reporters)
+      - name: Cache npm dependencies
         uses: actions/cache@v3
         with:
-          path: ~/.npm
+          path: |
+            ~/.npm
+            /usr/local/lib/node_modules
           key: ${{ runner.os }}-npm-dependencies-v1
           restore-keys: |
             ${{ runner.os }}-npm-
