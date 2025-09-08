@@ -1,5 +1,5 @@
 <TargetEndpoint name="backend">
   <HTTPTargetConnection>
-    <URL>https://ss.com..pk</URL>
+    <URL>https://mocktarget.apigee.net/json</URL>
   </HTTPTargetConnection>
 </TargetEndpoint>
