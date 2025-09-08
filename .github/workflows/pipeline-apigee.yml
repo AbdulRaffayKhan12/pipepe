@@ -84,16 +84,21 @@ jobs:
 
       - name: Run Postman Tests
         run: |
+          mkdir -p newman
           newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
             --reporters cli,htmlextra \
-            --reporter-htmlextra-export ${{ github.workspace }}/newman-report.html
+            --reporter-htmlextra-export newman/newman-report.html
+
+      - name: Debug – List files
+        if: always()
+        run: ls -R .
 
       - name: Upload Newman HTML Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: newman-html-report
-          path: ${{ github.workspace }}/newman-report.html
+          path: newman/newman-report.html
 
       - name: Add Newman Report Link to Summary
         if: always()
@@ -151,15 +156,14 @@ jobs:
               org=$(echo $row | jq -r '.Organization')
               rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
             done
-
             htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
             status="Deployment completed"
-            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
           else
-            proxy=$API_NAME
-            org=$APIGEE_ORG
-            status="❌ Deployment failed for API Proxy: $proxy in Organization: $org"
-            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status\"}"
+            proxy="$API_NAME"
+            org="$APIGEE_ORG"
+            htmlTable="<p>❌ Deployment failed for proxy <b>$proxy</b> in org <b>$org</b></p>"
+            status="Deployment failed"
           fi
 
+          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
           curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
