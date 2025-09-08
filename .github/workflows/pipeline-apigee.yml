@@ -67,12 +67,14 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      # ✅ Cache only npm package tarballs (lightweight, <100MB typically)
-      - name: Cache Newman dependencies
+      # ✅ Cache only Newman + reporter
+      - name: Cache Newman
         uses: actions/cache@v3
         with:
-          path: ~/.npm
-          key: ${{ runner.os }}-newman-cache-v1
+          path: |
+            /usr/local/lib/node_modules/newman
+            /usr/local/lib/node_modules/newman-reporter-htmlextra
+          key: ${{ runner.os }}-newman-v1
           restore-keys: |
             ${{ runner.os }}-newman-
 
