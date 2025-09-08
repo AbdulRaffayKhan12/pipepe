@@ -1,2 +1,2 @@
 ﻿org=abacus-apigee-demo
-env=dev2
+env=sandbox
