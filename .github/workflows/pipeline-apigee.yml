@@ -85,18 +85,21 @@ jobs:
       - name: Run Postman Tests
         run: |
           newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
-            --reporters cli,htmlextra,junit \
-            --reporter-htmlextra-export newman-report.html \
-            --reporter-junit-export newman-report.xml
+            --reporters cli,htmlextra \
+            --reporter-htmlextra-export newman-report.html
 
-      - name: Upload Test Reports
+      - name: Upload Newman HTML Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: newman-test-reports
-          path: |
-            newman-report.html
-            newman-report.xml
+          name: newman-html-report
+          path: newman-report.html
+
+      - name: Add Newman Report Link to Summary
+        if: always()
+        run: |
+          echo "### ✅ Newman HTML Test Report" >> $GITHUB_STEP_SUMMARY
+          echo "👉 [Download Report from Artifacts](../artifacts/newman-html-report/newman-report.html)" >> $GITHUB_STEP_SUMMARY
 
       - name: Zip Proxy
         run: |
@@ -138,7 +141,7 @@ jobs:
       - name: Send Teams Notification
         if: always()
         run: |
-          if [ "${{ job.status }}" == "success" ]; then
+          if [ -f "${{ github.workspace }}/deploy_results.json" ] && [ -s "${{ github.workspace }}/deploy_results.json" ]; then
             results=$(cat "${{ github.workspace }}/deploy_results.json")
             rows=""
             for row in $(echo "$results" | jq -c '.[]'); do
@@ -153,9 +156,9 @@ jobs:
             status="Deployment completed"
             payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
           else
-            proxy="${{ env.API_NAME }}"
-            org="${{ env.APIGEE_ORG }}"
-            status="Deployment failed for API Proxy: $proxy (Org: $org)"
+            proxy=$API_NAME
+            org=$APIGEE_ORG
+            status="❌ Deployment failed for API Proxy: $proxy in Organization: $org"
             payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status\"}"
           fi
 
