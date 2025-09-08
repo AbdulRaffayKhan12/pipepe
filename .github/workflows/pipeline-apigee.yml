@@ -86,14 +86,14 @@ jobs:
         run: |
           newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
             --reporters cli,htmlextra \
-            --reporter-htmlextra-export newman-report.html
+            --reporter-htmlextra-export ${{ github.workspace }}/newman-report.html
 
       - name: Upload Newman HTML Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: newman-html-report
-          path: newman-report.html
+          path: ${{ github.workspace }}/newman-report.html
 
       - name: Add Newman Report Link to Summary
         if: always()
