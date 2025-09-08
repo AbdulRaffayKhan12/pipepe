@@ -75,12 +75,25 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-npm-
 
-      - name: Install Newman
-        run: npm install -g newman
+      - name: Install Newman + Reporters
+        run: |
+          npm install -g newman newman-reporter-htmlextra
 
       - name: Run Postman Tests
         run: |
-          newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}"
+          newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
+            --reporters cli,htmlextra,junit \
+            --reporter-htmlextra-export newman-report.html \
+            --reporter-junit-export newman-report.xml
+
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-test-reports
+          path: |
+            newman-report.html
+            newman-report.xml
 
       - name: Zip Proxy
         run: |
