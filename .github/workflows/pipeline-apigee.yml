@@ -67,9 +67,11 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      # ✅ Cache only Newman + reporter
+      # ✅ Cache only Newman + reporter, quiet logs
       - name: Cache Newman
         uses: actions/cache@v3
+        env:
+          ACTIONS_CACHE_VERBOSE: false
         with:
           path: |
             /usr/local/lib/node_modules/newman
@@ -78,7 +80,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-newman-
 
-      - name: Install Newman + Reporters (if missing)
+      - name: Install Newman + Reporter (if missing)
         run: |
           if ! command -v newman >/dev/null 2>&1; then
             npm install -g newman newman-reporter-htmlextra
