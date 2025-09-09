@@ -156,10 +156,8 @@ jobs:
           token="${{ steps.auth.outputs.access_token }}"
           for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
             echo "Rolling back $API_NAME in $envName..."
-            # undeploy current
             curl -s -X DELETE "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$APIGEE_REVISION/deployments" \
               -H "Authorization: Bearer $token"
-            # fetch all revisions and rollback to previous stable one
             revisions=$(curl -s -H "Authorization: Bearer $token" \
               "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/apis/$API_NAME/revisions" | jq -r '.[]' | sort -n)
             prevRev=$(echo "$revisions" | grep -B1 "^$APIGEE_REVISION$" | head -n1)
@@ -184,10 +182,12 @@ jobs:
         run: |
           if [ "${TEST_FAILED}" = "1" ]; then
             status="❌ Deployment completed but Postman tests failed"
+            color="FF0000"
           else
             status="✅ Deployment and tests succeeded"
+            color="00FF00"
           fi
-          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>⚠️ No deployment results available\"}"
+
           if [ -s "${{ github.workspace }}/deploy_results.json" ]; then
             results=$(cat "${{ github.workspace }}/deploy_results.json")
             rows=""
@@ -200,10 +200,22 @@ jobs:
             done
             htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
             text="$(echo "$status<br>$htmlTable" | sed ':a;N;$!ba;s/\n/ /g' | sed 's/\"/\\"/g')"
-            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$text\"}"
+          else
+            text="$status<br>⚠️ No deployment results available"
           fi
+
+          payload="{
+            \"@type\": \"MessageCard\",
+            \"@context\": \"https://schema.org/extensions\",
+            \"summary\": \"Apigee Deployment Notification\",
+            \"themeColor\": \"$color\",
+            \"title\": \"Apigee Deployment Notification\",
+            \"text\": \"$text\"
+          }"
+
           echo "Payload being sent to Teams:"
           echo "$payload"
+
           curl -s -w "HTTP_STATUS:%{http_code}\n" -H "Content-Type: application/json" \
             -d "$payload" \
             $TEAMS_WEBHOOK
