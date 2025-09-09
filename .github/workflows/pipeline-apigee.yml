@@ -1,4 +1,4 @@
-name: Deploy to Apigee
+name: Test-Pipeline
 
 on:
   workflow_dispatch:
@@ -156,11 +156,14 @@ jobs:
             # undeploy current
             curl -s -X DELETE "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$APIGEE_REVISION/deployments" \
               -H "Authorization: Bearer $token"
-            # redeploy previous stable revision if available
-            if [ -n "$PREVIOUS_REVISION" ]; then
-              curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$PREVIOUS_REVISION/deployments?override=true" \
+            # fetch all revisions and rollback to previous stable one
+            revisions=$(curl -s -H "Authorization: Bearer $token" \
+              "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/apis/$API_NAME/revisions" | jq -r '.[]' | sort -n)
+            prevRev=$(echo "$revisions" | grep -B1 "^$APIGEE_REVISION$" | head -n1)
+            if [ -n "$prevRev" ]; then
+              curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$prevRev/deployments?override=true" \
                 -H "Authorization: Bearer $token"
-              echo "✅ Rolled back to revision $PREVIOUS_REVISION in $envName"
+              echo "✅ Rolled back to revision $prevRev in $envName"
             else
               echo "⚠️ No previous revision found to roll back"
             fi
@@ -172,3 +175,20 @@ jobs:
         with:
           name: newman-test-reports
           path: newman/
+
+      - name: Send Teams Notification
+        if: always()
+        run: |
+          results=$(cat "${{ github.workspace }}/deploy_results.json")
+          rows=""
+          for row in $(echo "$results" | jq -c '.'); do
+            proxy=$(echo $row | jq -r '.Proxy')
+            env=$(echo $row | jq -r '.Environment')
+            rev=$(echo $row | jq -r '.Revision')
+            org=$(echo $row | jq -r '.Organization')
+            rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
+          done
+          htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
+          status="Deployment completed"
+          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
+          curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
