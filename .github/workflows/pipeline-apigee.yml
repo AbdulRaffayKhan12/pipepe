@@ -18,7 +18,7 @@ jobs:
       PROXY_NAME: apiproxy
       ORG_CONFIG_PATH: org-config.txt
       ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
-      TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/...
+      TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/xxxx
       POSTMAN_COLLECTION_UID: 40041998-dee7eec2-5d39-49da-b172-2c535588dfc8
       POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
 
@@ -64,7 +64,6 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      # ✅ Cache node_modules (for Newman)
       - name: Cache node_modules
         uses: actions/cache@v3
         with:
@@ -83,7 +82,6 @@ jobs:
           zip -r "${{ env.ZIP_PATH }}" apiproxy
 
       - name: Import Apigee Proxy
-        id: import-proxy
         run: |
           org=$APIGEE_ORG
           zipFile=$ZIP_PATH
@@ -102,75 +100,73 @@ jobs:
           org=$APIGEE_ORG
           revision=$APIGEE_REVISION
           token="${{ steps.auth.outputs.access_token }}"
-          envList=$(echo $APIGEE_ENVS | tr ',' ' ')
-          results="[]"
-          for envName in $envList; do
-            echo "Deploying revision $revision to $envName..."
+          for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
             curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
-              -H "Authorization: Bearer $token" >/dev/null
-            results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
+              -H "Authorization: Bearer $token"
           done
-          echo "$results" > "${{ github.workspace }}/deploy_results.json"
 
-      # ⏳ Wait until deployment is ready (max 90s)
-      - name: Wait for Deployment Ready
+      - name: Wait for Deployment (max 90s)
         run: |
-          org=$APIGEE_ORG
           token="${{ steps.auth.outputs.access_token }}"
-          revision=$APIGEE_REVISION
-          envList=$(echo $APIGEE_ENVS | tr ',' ' ')
-          for envName in $envList; do
-            echo "Checking deployment status in $envName..."
-            for i in {1..18}; do  # 18 * 5s = 90s
-              sleep 5
-              deployments=$(curl -s -H "Authorization: Bearer $token" \
-                "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/deployments")
-              deployed=$(echo "$deployments" | jq -r ".deployments[]?.revision" | grep -w "$revision" || true)
-              if [ -n "$deployed" ]; then
-                echo "✅ Revision $revision is deployed in $envName"
-                break
-              fi
-              if [ "$i" -eq 18 ]; then
-                echo "❌ Deployment did not become ready in $envName within 90s"
-                exit 1
-              fi
+          for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
+            state=""
+            retries=0
+            while [ "$state" != "READY" ] && [ $retries -lt 18 ]; do
+              state=$(curl -s -H "Authorization: Bearer $token" \
+                "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$APIGEE_REVISION/deployments" \
+                | jq -r '.state // .deployments[0].state')
+              echo "Deployment state in $envName: $state"
+              [ "$state" != "READY" ] && sleep 5
+              retries=$((retries+1))
             done
+            if [ "$state" = "READY" ]; then
+              echo "✅ Deployment READY in $envName"
+            else
+              echo "❌ Deployment failed to become READY in $envName within 90 seconds"
+              exit 1
+            fi
           done
 
-      - name: Run Newman Tests
-        id: newman
+      - name: Run Postman Tests
         run: |
           mkdir -p newman
+          set +e
           npx newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
             --reporters cli,htmlextra,junit \
             --reporter-htmlextra-export newman/newman-report.html \
             --reporter-junit-export newman/newman-report.xml
-        continue-on-error: true
+          exit_code=$?
+          set -e
+          if [ $exit_code -ne 0 ]; then
+            echo "TEST_FAILED=1" >> $GITHUB_ENV
+            exit 1
+          else
+            echo "TEST_FAILED=0" >> $GITHUB_ENV
+          fi
 
-      - name: Rollback if Tests Fail
-        if: steps.newman.outcome == 'failure'
+      - name: Rollback if Tests Failed
+        if: failure()
         run: |
-          org=$APIGEE_ORG
           token="${{ steps.auth.outputs.access_token }}"
-          revision=$APIGEE_REVISION
-          envList=$(echo $APIGEE_ENVS | tr ',' ' ')
-          rollbackResults="[]"
-          for envName in $envList; do
-            echo "Looking for previous revision in $envName..."
-            deployments=$(curl -s -H "Authorization: Bearer $token" \
-              "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/deployments")
-            prev=$(echo "$deployments" | jq -r ".deployments[]?.revision" | sort -nr | grep -v "$revision" | head -n 1)
+          for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
+            echo "Rolling back $API_NAME in $envName..."
+            # undeploy current
+            curl -s -X DELETE "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$APIGEE_REVISION/deployments" \
+              -H "Authorization: Bearer $token"
+            # find previous deployed revision via management API
+            revisions=$(curl -s -H "Authorization: Bearer $token" \
+              "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/apis/$API_NAME/deployments" \
+              | jq -r ".deployments[]?.revision" | sort -nr)
+            prev=$(echo "$revisions" | grep -v "$APIGEE_REVISION" | head -n 1)
             if [ -n "$prev" ]; then
-              echo "⚠️ Tests failed. Rolling back $envName to revision $prev"
-              curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$prev/deployments?override=true" \
-                -H "Authorization: Bearer $token" >/dev/null
-              rollbackResults=$(echo $rollbackResults | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"RolledBackTo\":\"$prev\",\"Organization\":\"$org\"}]")
+              curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$prev/deployments?override=true" \
+                -H "Authorization: Bearer $token"
+              echo "✅ Rolled back to revision $prev in $envName"
+              echo "ROLLED_BACK=$prev" >> $GITHUB_ENV
             else
-              echo "⚠️ No previous revision found to roll back in $envName"
+              echo "⚠️ No previous revision found to roll back"
             fi
           done
-          echo "$rollbackResults" > "${{ github.workspace }}/rollback_results.json"
-          exit 1
 
       - name: Upload Test Reports
         if: always()
@@ -182,31 +178,10 @@ jobs:
       - name: Send Teams Notification
         if: always()
         run: |
-          if [ -s "${{ github.workspace }}/rollback_results.json" ]; then
-            results=$(cat "${{ github.workspace }}/rollback_results.json")
-            rows=""
-            for row in $(echo "$results" | jq -c '.[]'); do
-              proxy=$(echo $row | jq -r '.Proxy')
-              env=$(echo $row | jq -r '.Environment')
-              rev=$(echo $row | jq -r '.RolledBackTo')
-              org=$(echo $row | jq -r '.Organization')
-              rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
-            done
-            htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Rolled Back To</th><th>Organization</th></tr>$rows</table>"
-            payload="{\"title\": \"Apigee Rollback Notification\", \"text\": \"Tests failed. Proxy was rolled back.<br>$htmlTable\"}"
-          elif [ -s "${{ github.workspace }}/deploy_results.json" ]; then
-            results=$(cat "${{ github.workspace }}/deploy_results.json")
-            rows=""
-            for row in $(echo "$results" | jq -c '.[]'); do
-              proxy=$(echo $row | jq -r '.Proxy')
-              env=$(echo $row | jq -r '.Environment')
-              rev=$(echo $row | jq -r '.Revision')
-              org=$(echo $row | jq -r '.Organization')
-              rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
-            done
-            htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
-            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"Deployment completed.<br>$htmlTable\"}"
+          if [ "${TEST_FAILED}" = "1" ]; then
+            msg="⚠️ Tests failed for $API_NAME revision $APIGEE_REVISION. Rolled back to revision ${ROLLED_BACK:-'N/A'}"
           else
-            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"Deployment failed for API Proxy: $API_NAME (Org: $APIGEE_ORG)\"}"
+            msg="✅ Successfully deployed $API_NAME revision $APIGEE_REVISION in $APIGEE_ORG"
           fi
+          payload="{\"text\": \"$msg\"}"
           curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
