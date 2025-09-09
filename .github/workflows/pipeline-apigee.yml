@@ -18,7 +18,7 @@ jobs:
       PROXY_NAME: apiproxy
       ORG_CONFIG_PATH: org-config.txt
       ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
-      TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/6e279d38-a82e-425d-bc2a-c1f8a54d60c2@51f97e66-3fe9-450d-88ac-7a2380c3f3c6/IncomingWebhook/2a86cd093d72455cafb0503fc1adf50d/4932dba3-6bfd-4d5f-9fcf-fe74385690e2/V2pRIdhyjxtMj7YaQ2JRYfggpvLkxjSuwU_gaoZ4ILnjc1
+      TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/...
       POSTMAN_COLLECTION_UID: 40041998-dee7eec2-5d39-49da-b172-2c535588dfc8
       POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
 
@@ -54,6 +54,7 @@ jobs:
           echo "APIGEE_ENVS=$envs" >> $GITHUB_ENV
           echo "WIF_PROVIDER=$provider" >> $GITHUB_ENV
           echo "SERVICE_ACCOUNT=$sa" >> $GITHUB_ENV
+
       - name: Authenticate to Google Cloud (WIF)
         id: auth
         uses: google-github-actions/auth@v2
@@ -63,7 +64,6 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      # ✅ Cache local node_modules (Newman + reporters)
       - name: Cache node_modules
         uses: actions/cache@v3
         with:
@@ -71,72 +71,97 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
+
       - name: Install Newman + Reporters
         run: |
           npm init -y >/dev/null 2>&1 || true
           npm install newman newman-reporter-htmlextra
-      - name: Run Postman Tests
+
+      - name: Zip Proxy
+        run: |
+          zip -r "${{ env.ZIP_PATH }}" apiproxy
+
+      - name: Import Apigee Proxy
+        id: import
+        run: |
+          token="${{ steps.auth.outputs.access_token }}"
+          importResponseFile="${{ github.workspace }}/import_response.json"
+          curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/apis?action=import&name=$API_NAME" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @"$ZIP_PATH" \
+            -o "$importResponseFile"
+          revision=$(jq -r '.revision' "$importResponseFile")
+          echo "APIGEE_REVISION=$revision" >> $GITHUB_ENV
+          previousRevision=$(jq -r '.lastRevisionCreatedBeforeImport // empty' "$importResponseFile")
+          echo "PREVIOUS_REVISION=$previousRevision" >> $GITHUB_ENV
+
+      - name: Deploy Apigee Proxy
+        id: deploy
+        run: |
+          token="${{ steps.auth.outputs.access_token }}"
+          envList=$(echo $APIGEE_ENVS | tr ',' ' ')
+          for envName in $envList; do
+            curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$APIGEE_REVISION/deployments?override=true" \
+              -H "Authorization: Bearer $token"
+          done
+
+      - name: Wait for Deployment
+        run: |
+          token="${{ steps.auth.outputs.access_token }}"
+          for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
+            state=""
+            retries=0
+            while [ "$state" != "deployed" ] && [ $retries -lt 10 ]; do
+              state=$(curl -s -H "Authorization: Bearer $token" "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$APIGEE_REVISION/deployments" | jq -r '.environment[0].state')
+              echo "Deployment state in $envName: $state"
+              [ "$state" != "deployed" ] && sleep 5
+              retries=$((retries+1))
+            done
+            if [ "$state" != "deployed" ]; then
+              echo "Deployment failed in $envName"
+              exit 1
+            fi
+          done
+
+      - name: Run Postman (Newman) Tests
+        id: newman
         run: |
           mkdir -p newman
-          npx newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
+          npx newman run "https://api.getpostman.com/collections/${POSTMAN_COLLECTION_UID}?apikey=${POSTMAN_API_KEY}" \
             --reporters cli,htmlextra,junit \
             --reporter-htmlextra-export newman/newman-report.html \
             --reporter-junit-export newman/newman-report.xml
-      - name: Upload Test Reports
+        continue-on-error: true
+
+      - name: Rollback if Tests Fail
+        if: steps.newman.outcome != 'success'
+        run: |
+          if [ -n "$PREVIOUS_REVISION" ]; then
+            echo "Tests failed. Rolling back to revision $PREVIOUS_REVISION"
+            token="${{ steps.auth.outputs.access_token }}"
+            for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
+              curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$PREVIOUS_REVISION/deployments?override=true" \
+                -H "Authorization: Bearer $token"
+            done
+          else
+            echo "No previous revision to rollback to."
+          fi
+
+      - name: Upload Newman Test Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: newman-test-reports
           path: newman/
 
-      - name: Zip Proxy
-        run: |
-          zip -r "${{ env.ZIP_PATH }}" apiproxy
-      - name: Import Apigee Proxy
-        run: |
-          org=$APIGEE_ORG
-          zipFile=$ZIP_PATH
-          token="${{ steps.auth.outputs.access_token }}"
-          importResponseFile="${{ github.workspace }}/import_response.json"
-          curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/apis?action=import&name=$API_NAME" \
-            -H "Authorization: Bearer $token" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary @"$zipFile" \
-            -o "$importResponseFile"
-          revision=$(cat "$importResponseFile" | jq -r '.revision')
-          echo "APIGEE_REVISION=$revision" >> $GITHUB_ENV
-      - name: Deploy Apigee Proxy
-        run: |
-          org=$APIGEE_ORG
-          revision=$APIGEE_REVISION
-          token="${{ steps.auth.outputs.access_token }}"
-          envList=$(echo $APIGEE_ENVS | tr ',' ' ')
-          results="[]"
-          for envName in $envList; do
-            curl -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
-              -H "Authorization: Bearer $token"
-            
-            results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
-          done
-          echo "$results" > "${{ github.workspace }}/deploy_results.json"
       - name: Send Teams Notification
         if: always()
         run: |
-          if [ -s "${{ github.workspace }}/deploy_results.json" ]; then
-            results=$(cat "${{ github.workspace }}/deploy_results.json")
-            rows=""
-            for row in $(echo "$results" | jq -c '.[]'); do
-              proxy=$(echo $row | jq -r '.Proxy')
-              env=$(echo $row | jq -r '.Environment')
-              rev=$(echo $row | jq -r '.Revision')
-              org=$(echo $row | jq -r '.Organization')
-              rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
-            done
-            htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
-            status="Deployment completed"
-            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
+          if [ -f "newman/newman-report.html" ]; then
+            status="Deployment and tests completed"
           else
-            status="Deployment failed for API Proxy: $API_NAME (Org: $APIGEE_ORG)"
-            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status\"}"
+            status="Deployment succeeded but tests failed"
           fi
+          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status\"}"
           curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
