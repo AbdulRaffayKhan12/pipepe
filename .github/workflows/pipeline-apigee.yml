@@ -103,10 +103,13 @@ jobs:
           org=$APIGEE_ORG
           revision=$APIGEE_REVISION
           token="${{ steps.auth.outputs.access_token }}"
+          results="[]"
           for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
             curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
+            results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
           done
+          echo "$results" > "${{ github.workspace }}/deploy_results.json"
 
       - name: Wait for Deployment (max 90s)
         run: |
@@ -184,14 +187,11 @@ jobs:
           else
             status="✅ Deployment and tests succeeded"
           fi
-
-          # default payload if no results file
           payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>⚠️ No deployment results available\"}"
-
           if [ -s "${{ github.workspace }}/deploy_results.json" ]; then
             results=$(cat "${{ github.workspace }}/deploy_results.json")
             rows=""
-            for row in $(echo "$results" | jq -c '.'); do
+            for row in $(echo "$results" | jq -c '.[]'); do
               proxy=$(echo $row | jq -r '.Proxy')
               env=$(echo $row | jq -r '.Environment')
               rev=$(echo $row | jq -r '.Revision')
@@ -199,15 +199,11 @@ jobs:
               rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
             done
             htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
-
-            # escape for Teams JSON
             text="$(echo "$status<br>$htmlTable" | sed ':a;N;$!ba;s/\n/ /g' | sed 's/\"/\\"/g')"
             payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$text\"}"
           fi
-
           echo "Payload being sent to Teams:"
           echo "$payload"
-
           curl -s -w "HTTP_STATUS:%{http_code}\n" -H "Content-Type: application/json" \
             -d "$payload" \
             $TEAMS_WEBHOOK
