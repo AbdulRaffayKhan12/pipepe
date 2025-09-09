@@ -18,7 +18,7 @@ jobs:
       PROXY_NAME: apiproxy
       ORG_CONFIG_PATH: org-config.txt
       ZIP_PATH: ${{ github.workspace }}/Reverse-pipe.zip
-      TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/xxx   # masked for safety
+      TEAMS_WEBHOOK: https://abacusglobal.webhook.office.com/webhookb2/xxxx
       POSTMAN_COLLECTION_UID: 40041998-dee7eec2-5d39-49da-b172-2c535588dfc8
       POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
 
@@ -64,7 +64,7 @@ jobs:
           token_format: "access_token"
           export_environment_variables: false
 
-      # ✅ Cache Newman and reporters
+      # ✅ Cache node_modules (Newman only)
       - name: Cache node_modules
         uses: actions/cache@v3
         with:
@@ -94,27 +94,21 @@ jobs:
             --data-binary @"$zipFile" \
             -o "$importResponseFile"
           revision=$(jq -r '.revision' "$importResponseFile")
-          if [ -z "$revision" ] || [ "$revision" == "null" ]; then
-            echo "❌ Failed to get revision from import response"
-            cat "$importResponseFile"
-            exit 1
-          fi
+          prev=$(jq -r '.previousRevision // empty' "$importResponseFile")
           echo "APIGEE_REVISION=$revision" >> $GITHUB_ENV
+          echo "PREVIOUS_REVISION=$prev" >> $GITHUB_ENV
 
       - name: Deploy Apigee Proxy
         run: |
           org=$APIGEE_ORG
           revision=$APIGEE_REVISION
           token="${{ steps.auth.outputs.access_token }}"
-          results="[]"
           for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
             curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
-            results=$(echo $results | jq ". += [{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$org\"}]")
           done
-          echo "$results" > "${{ github.workspace }}/deploy_results.json"
 
-      - name: Wait for Deployment
+      - name: Wait for Deployment (max 90s)
         run: |
           token="${{ steps.auth.outputs.access_token }}"
           for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
@@ -123,24 +117,54 @@ jobs:
             while [ "$state" != "READY" ] && [ $retries -lt 18 ]; do
               state=$(curl -s -H "Authorization: Bearer $token" \
                 "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$APIGEE_REVISION/deployments" \
-                | jq -r '.state')
+                | jq -r '.state // .deployments[0].state')
               echo "Deployment state in $envName: $state"
               [ "$state" != "READY" ] && sleep 5
               retries=$((retries+1))
             done
-            if [ "$state" != "READY" ]; then
-              echo "❌ Deployment failed in $envName"
+            if [ "$state" = "READY" ]; then
+              echo "✅ Deployment READY in $envName"
+            else
+              echo "❌ Deployment failed to become READY in $envName within 90 seconds"
               exit 1
             fi
           done
 
-      - name: Run Newman Tests
+      - name: Run Postman Tests
         run: |
           mkdir -p newman
+          set +e
           npx newman run "https://api.getpostman.com/collections/${{ env.POSTMAN_COLLECTION_UID }}?apikey=${{ env.POSTMAN_API_KEY }}" \
             --reporters cli,htmlextra,junit \
             --reporter-htmlextra-export newman/newman-report.html \
             --reporter-junit-export newman/newman-report.xml
+          exit_code=$?
+          set -e
+          if [ $exit_code -ne 0 ]; then
+            echo "TEST_FAILED=1" >> $GITHUB_ENV
+            exit 1
+          else
+            echo "TEST_FAILED=0" >> $GITHUB_ENV
+          fi
+
+      - name: Rollback if Tests Failed
+        if: failure()
+        run: |
+          token="${{ steps.auth.outputs.access_token }}"
+          for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
+            echo "Rolling back $API_NAME in $envName..."
+            # undeploy current
+            curl -s -X DELETE "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$APIGEE_REVISION/deployments" \
+              -H "Authorization: Bearer $token"
+            # redeploy previous stable revision if available
+            if [ -n "$PREVIOUS_REVISION" ]; then
+              curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$PREVIOUS_REVISION/deployments?override=true" \
+                -H "Authorization: Bearer $token"
+              echo "✅ Rolled back to revision $PREVIOUS_REVISION in $envName"
+            else
+              echo "⚠️ No previous revision found to roll back"
+            fi
+          done
 
       - name: Upload Test Reports
         if: always()
@@ -148,43 +172,3 @@ jobs:
         with:
           name: newman-test-reports
           path: newman/
-
-      - name: Rollback on Test Failure
-        if: failure()
-        run: |
-          token="${{ steps.auth.outputs.access_token }}"
-          org=$APIGEE_ORG
-          for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
-            prev=$(curl -s -H "Authorization: Bearer $token" \
-              "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/deployments" \
-              | jq -r '.revisionIds[-2]')
-            if [ "$prev" != "null" ]; then
-              echo "🔄 Rolling back $API_NAME in $envName to revision $prev"
-              curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$prev/deployments?override=true" \
-                -H "Authorization: Bearer $token"
-            else
-              echo "⚠️ No previous revision found for rollback in $envName"
-            fi
-          done
-
-      - name: Send Teams Notification
-        if: always()
-        run: |
-          if [ -s "${{ github.workspace }}/deploy_results.json" ]; then
-            results=$(cat "${{ github.workspace }}/deploy_results.json")
-            rows=""
-            for row in $(echo "$results" | jq -c '.[]'); do
-              proxy=$(echo $row | jq -r '.Proxy')
-              env=$(echo $row | jq -r '.Environment')
-              rev=$(echo $row | jq -r '.Revision')
-              org=$(echo $row | jq -r '.Organization')
-              rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
-            done
-            htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
-            status="Deployment completed"
-            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
-          else
-            status="Deployment failed for API Proxy: $API_NAME (Org: $APIGEE_ORG)"
-            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status\"}"
-          fi
-          curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
