@@ -100,6 +100,7 @@ jobs:
           org=$APIGEE_ORG
           revision=$APIGEE_REVISION
           token="${{ steps.auth.outputs.access_token }}"
+          rm -f $GITHUB_WORKSPACE/deploy_results.json
           for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
             curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
@@ -155,18 +156,19 @@ jobs:
             # undeploy current
             curl -s -X DELETE "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$APIGEE_REVISION/deployments" \
               -H "Authorization: Bearer $token"
-            # find previous deployed revision via management API
-            revisions=$(curl -s -H "Authorization: Bearer $token" \
-              "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/apis/$API_NAME/deployments" \
-              | jq -r ".deployments[]?.revision" | sort -nr)
-            prev=$(echo "$revisions" | grep -v "$APIGEE_REVISION" | head -n 1)
+
+            # get previous deployed revision from management API
+            prev=$(curl -s -H "Authorization: Bearer $token" \
+              "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/deployments" \
+              | jq -r ".deployments[]?.revision" | grep -v "$APIGEE_REVISION" | sort -nr | head -n 1)
+
             if [ -n "$prev" ]; then
               curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$prev/deployments?override=true" \
                 -H "Authorization: Bearer $token"
               echo "✅ Rolled back to revision $prev in $envName"
               echo "ROLLED_BACK=$prev" >> $GITHUB_ENV
             else
-              echo "⚠️ No previous revision found to roll back"
+              echo "⚠️ No previous revision found to roll back in $envName"
             fi
           done
 
