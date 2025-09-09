@@ -103,6 +103,8 @@ jobs:
           for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
             curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
+            # Save deploy result for Teams
+            echo "{\"Proxy\":\"$API_NAME\",\"Environment\":\"$envName\",\"Revision\":\"$revision\",\"Organization\":\"$APIGEE_ORG\"}" >> $GITHUB_WORKSPACE/deploy_results.json
           done
 
       - name: Wait for Deployment (max 90s)
@@ -111,7 +113,7 @@ jobs:
           for envName in $(echo $APIGEE_ENVS | tr ',' ' '); do
             state=""
             retries=0
-            while [ "$state" != "READY" ] && [ $retries -lt 20 ]; do
+            while [ "$state" != "READY" ] && [ $retries -lt 18 ]; do
               state=$(curl -s -H "Authorization: Bearer $token" \
                 "https://apigee.googleapis.com/v1/organizations/$APIGEE_ORG/environments/$envName/apis/$API_NAME/revisions/$APIGEE_REVISION/deployments" \
                 | jq -r '.state // .deployments[0].state')
@@ -178,10 +180,16 @@ jobs:
       - name: Send Teams Notification
         if: always()
         run: |
-          if [ "${TEST_FAILED}" = "1" ]; then
-            msg="⚠️ Tests failed for $API_NAME revision $APIGEE_REVISION. Rolled back to revision ${ROLLED_BACK:-'N/A'}"
-          else
-            msg="✅ Successfully deployed $API_NAME revision $APIGEE_REVISION in $APIGEE_ORG"
-          fi
-          payload="{\"text\": \"$msg\"}"
+          results=$(cat "${{ github.workspace }}/deploy_results.json")
+          rows=""
+          for row in $(echo "$results" | jq -c '.'); do
+            proxy=$(echo $row | jq -r '.Proxy')
+            env=$(echo $row | jq -r '.Environment')
+            rev=$(echo $row | jq -r '.Revision')
+            org=$(echo $row | jq -r '.Organization')
+            rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
+          done
+          htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
+          status="Deployment completed"
+          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
           curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
