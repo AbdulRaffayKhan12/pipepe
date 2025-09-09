@@ -54,7 +54,6 @@ jobs:
           echo "APIGEE_ENVS=$envs" >> $GITHUB_ENV
           echo "WIF_PROVIDER=$provider" >> $GITHUB_ENV
           echo "SERVICE_ACCOUNT=$sa" >> $GITHUB_ENV
-
       - name: Authenticate to Google Cloud (WIF)
         id: auth
         uses: google-github-actions/auth@v2
@@ -72,16 +71,13 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
-
       - name: Install Newman + Reporters
         run: |
           npm init -y >/dev/null 2>&1 || true
           npm install newman newman-reporter-htmlextra
-
       - name: Zip Proxy
         run: |
           zip -r "${{ env.ZIP_PATH }}" apiproxy
-
       - name: Import Apigee Proxy
         run: |
           org=$APIGEE_ORG
@@ -97,7 +93,6 @@ jobs:
           prev=$(jq -r '.previousRevision // empty' "$importResponseFile")
           echo "APIGEE_REVISION=$revision" >> $GITHUB_ENV
           echo "PREVIOUS_REVISION=$prev" >> $GITHUB_ENV
-
       - name: Deploy Apigee Proxy
         run: |
           org=$APIGEE_ORG
@@ -107,7 +102,6 @@ jobs:
             curl -s -X POST "https://apigee.googleapis.com/v1/organizations/$org/environments/$envName/apis/$API_NAME/revisions/$revision/deployments?override=true" \
               -H "Authorization: Bearer $token"
           done
-
       - name: Wait for Deployment (max 90s)
         run: |
           token="${{ steps.auth.outputs.access_token }}"
@@ -129,7 +123,6 @@ jobs:
               exit 1
             fi
           done
-
       - name: Run Postman Tests
         run: |
           mkdir -p newman
@@ -146,7 +139,6 @@ jobs:
           else
             echo "TEST_FAILED=0" >> $GITHUB_ENV
           fi
-
       - name: Rollback if Tests Failed
         if: failure()
         run: |
@@ -168,7 +160,6 @@ jobs:
               echo "⚠️ No previous revision found to roll back"
             fi
           done
-
       - name: Upload Test Reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -179,16 +170,27 @@ jobs:
       - name: Send Teams Notification
         if: always()
         run: |
-          results=$(cat "${{ github.workspace }}/deploy_results.json")
-          rows=""
-          for row in $(echo "$results" | jq -c '.'); do
-            proxy=$(echo $row | jq -r '.Proxy')
-            env=$(echo $row | jq -r '.Environment')
-            rev=$(echo $row | jq -r '.Revision')
-            org=$(echo $row | jq -r '.Organization')
-            rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
-          done
-          htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
-          status="Deployment completed"
-          payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
+          # set status depending on test results
+          if [ "${TEST_FAILED}" = "1" ]; then
+            status="❌ Deployment completed but Postman tests failed"
+          else
+            status="✅ Deployment and tests succeeded"
+          fi
+
+          if [ -s "${{ github.workspace }}/deploy_results.json" ]; then
+            results=$(cat "${{ github.workspace }}/deploy_results.json")
+            rows=""
+            for row in $(echo "$results" | jq -c '.'); do
+              proxy=$(echo $row | jq -r '.Proxy')
+              env=$(echo $row | jq -r '.Environment')
+              rev=$(echo $row | jq -r '.Revision')
+              org=$(echo $row | jq -r '.Organization')
+              rows="$rows<tr><td>$proxy</td><td>$env</td><td>$rev</td><td>$org</td></tr>"
+            done
+            htmlTable="<table border='1'><tr><th>API Proxy</th><th>Environment</th><th>Revision</th><th>Organization</th></tr>$rows</table>"
+            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>$htmlTable\"}"
+          else
+            payload="{\"title\": \"Apigee Deployment Notification\", \"text\": \"$status<br>⚠️ No deployment results available\"}"
+          fi
+
           curl -H "Content-Type: application/json" -d "$payload" $TEAMS_WEBHOOK
