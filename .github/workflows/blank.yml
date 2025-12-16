@@ -20,3 +20,28 @@ on:
           - main
           - develop
           - release
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Print selected inputs
+        run: |
+          echo "City selected: ${{ github.event.inputs.city }}"
+          echo "Branch selected: ${{ github.event.inputs.branch }}"
+
+      - name: City specific logic
+        run: |
+          if [ "${{ github.event.inputs.city }}" = "Karachi" ]; then
+            echo "Deploying to Karachi environment"
+          elif [ "${{ github.event.inputs.city }}" = "Lahore" ]; then
+            echo "Deploying to Lahore environment"
+          else
+            echo "Deploying to Islamabad environment"
+          fi
