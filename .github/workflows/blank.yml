@@ -1,0 +1,22 @@
+name: Deploy with Inputs
+
+on:
+  workflow_dispatch:
+    inputs:
+      city:
+        description: "Select city"
+        required: true
+        type: choice
+        options:
+          - Karachi
+          - Lahore
+          - Islamabad
+
+      branch:
+        description: "Select branch"
+        required: true
+        type: choice
+        options:
+          - main
+          - develop
+          - release
